@@ -1,4 +1,4 @@
-Versioning: `0.4.2 (38)` — semver + change # that +1 every release (never resets).
+Versioning: `0.39 (39)` — two-number sub-version + change # (`0.XX (N)`, not three-part semver). Counter +1 every release (never resets).
 
 - One-line install via `install.sh` (detects apt-get/dnf/yum/pacman/zypper/apk; most Linux distros)
 - Bubblewrap optional in install (`INSTALL_BWRAP=0/1` or prompt); install continues if bwrap unavailable
@@ -9,7 +9,8 @@ Versioning: `0.4.2 (38)` — semver + change # that +1 every release (never rese
 - **Tasks** — header **Task** dropdown: Chat | Image | Video | Vision; **Mode** Online | Local (never grayed out); labels above Task/Mode/Provider/Model
 - **Short LED** — status text `OK` / `No key` / `No model` (no provider/model name)
 - **Image / Video / Vision** — Online APIs where available (Gemini image + Veo best-effort, OpenAI Images, multimodal vision); Local best-effort / clear unsupported; saves under `workspace/generated/`
-- **Telegram media attach** — `sendPhoto` / `sendVideo` / `sendDocument` multipart (≤50MB); no Download: http link injection; photos → Vision; `/image` `/video` shortcuts
+- **API rate limits** — `.env` `TPM=0` (off), `RPM=14`, `RPD=500`, `API_DELAY_SEC=5`. `0` turns that knob off. Online LLM/media HTTP only (local Ollama / llama.cpp skipped). Waits up to ~60s for delay/RPM; daily RPD is a hard `rate limited` error (no retry storm). One lock shared by Telegram + web.
+- **Telegram text-only** — DMs go to `run_chat` (YES/NO shell confirm kept). Photos: "Telegram is text chat only for now." No `sendPhoto` / `sendVideo` / `sendDocument` from the message handler. Web Image/Video still works.
 - **PUBLIC_BASE_URL** — still for web/LAN absolute `/api/download`; Telegram does not rely on links
 - **Chat history Markdown** — persist under `chats/YYYY_MM/YYYY_MM_DD.md` (sibling of `memory/` under AI_HOME; disk archive); `GET /api/chat/history`; web UI restores on refresh; `HISTORY_TURNS` caps model context (not the full day file)
 - **.env header** — `.env.example` starts with `env_version` matching `VERSION` (no runtime outdated warning)

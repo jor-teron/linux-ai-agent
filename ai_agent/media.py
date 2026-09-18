@@ -5,6 +5,9 @@ Shared by image/video/vision tasks and the Telegram bridge. Stdlib only.
 Telegram Bot API hard-limit for bot uploads is 50MB — we refuse larger
 files with a clear error instead of attempting send*.
 
+This module does not call provider HTTP. Online LLM/media rate limits live
+in ai_agent.ratelimit and are applied by brain._http_json / tasks.py.
+
 Imports from: ai_agent.config (WORKSPACE, ensure_ws).
 Used by: tasks, telegram, server (optional).
 """

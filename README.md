@@ -1,6 +1,6 @@
 # AI Agent (linux-ai-agent)
 
-Version: see `VERSION` (semver + change #, e.g. `0.4.1 (37)`).
+Version: see `VERSION` (two-number + change #, e.g. `0.39 (39)`; not three-part semver).
 
 Tiny browser chat agent for most Linux distros. Cloud providers (Gemini, ChatGPT, Grok, Claude, DeepSeek, OpenRouter, DeepInfra) plus **Online / Local** modes for Ollama or llama.cpp on your machine.
 

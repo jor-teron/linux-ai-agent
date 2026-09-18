@@ -25,15 +25,18 @@ ROOT = PKG_DIR.parent
 
 
 def app_version():
-    """Read VERSION (e.g. "0.1.26 (26)") for UI /api/health.
+    """Read VERSION for UI /api/health. Returned as text — not parsed.
 
-    Format: semver + change counter in brackets; counter +1 every release.
+    Current format is two-number sub-version + change counter, e.g. "0.39 (39)".
+    Older three-part strings ("0.4.2 (38)") still pass through unchanged.
+    Two parts or three parts are both OK; nothing here splits on X.Y.Z.
+    The counter in brackets +1 every release and never resets.
     """
     vp = ROOT / "VERSION"
     try:
-        return vp.read_text(encoding="utf-8").strip() or "0.0.0"
+        return vp.read_text(encoding="utf-8").strip() or "0.0"
     except OSError:
-        return "0.0.0"
+        return "0.0"
 
 
 
@@ -574,6 +577,54 @@ def shell_net_env_off():
     """
     raw = (_env_get("SHELL_NET") or "1").strip().lower()
     return raw in ("0", "false", "no", "off")
+
+
+# ---------------------------------------------------------------------------
+# Online API rate limits (TPM / RPM / RPD / API_DELAY_SEC)
+# ---------------------------------------------------------------------------
+# 0 means that knob is off. Defaults match .env.example.
+# Read on every call so an .env edit applies without a code change.
+# The limiter itself lives in ai_agent.ratelimit (used before online HTTP).
+
+
+def _env_nonneg(name, default, integer=False):
+    """Non-negative number from .env / process env. Bad or negative → default.
+
+    Empty/unset uses default. "0" is kept (it means the limit is off).
+    """
+    raw = _env_get(name)
+    if raw == "":
+        n = float(default)
+    else:
+        try:
+            n = float(raw)
+        except ValueError:
+            n = float(default)
+    if n < 0:
+        n = float(default)
+    if integer:
+        return int(n)
+    return n
+
+
+def api_tpm():
+    """Max estimated tokens per rolling minute (TPM). Default 0 = off."""
+    return _env_nonneg("TPM", 0, integer=True)
+
+
+def api_rpm():
+    """Max online API requests per rolling 60s (RPM). Default 14. 0 = off."""
+    return _env_nonneg("RPM", 14, integer=True)
+
+
+def api_rpd():
+    """Max online API requests per local calendar day (RPD). Default 500. 0 = off."""
+    return _env_nonneg("RPD", 500, integer=True)
+
+
+def api_delay_sec():
+    """Minimum seconds between online API calls (API_DELAY_SEC). Default 5. 0 = off."""
+    return _env_nonneg("API_DELAY_SEC", 5)
 
 
 def ensure_ws():

@@ -2,16 +2,18 @@
 Optional Telegram DM bridge (long polling, no webhook).
 
 When TELEGRAM_BOT_TOKEN is set in .env, a background thread polls getUpdates
-and routes private messages (and photos for Vision) through tasks.run_task /
-brain.run_chat (same path as the web UI). Shell confirm becomes YES/NO
-(case-insensitive); sudo may be YES <password>.
+and routes private text DMs through brain.run_chat (same chat path as the
+web UI). v0.39 is text-only: photos get a short text reply and are not
+downloaded into Vision. /image /video /vision are ordinary chat text, not
+task routes. Shell confirm stays YES/NO (case-insensitive); sudo may be
+YES <password>.
 
-Generated / written files are sent via Bot API multipart upload
-(sendPhoto / sendVideo / sendDocument) — no Download: http links in
-Telegram text. Cap 50MB; oversize files are skipped with a clear error.
-Chat turns append to chats/YYYY_MM/YYYY_MM_DD.md (sibling of memory/).
+sendPhoto / sendVideo / sendDocument and send_result_media / send_tool_media
+remain defined so other code can import them, but the message handler does
+not call them. Text replies do not depend on media.py. Chat turns still
+append to chats/YYYY_MM/YYYY_MM_DD.md (sibling of memory/).
 
-Imports from: ai_agent.config, brain, tasks, media, chat_history, tools.
+Imports from: ai_agent.config, brain, chat_history, tools (media is lazy).
 Used by: run (start_telegram_thread). Respects TOOLS_DEFAULT via run_chat.
 """
 import json
@@ -31,12 +33,6 @@ from ai_agent.config import (
 )
 from ai_agent.brain import run_chat
 from ai_agent.chat_history import append_exchange
-from ai_agent.media import (
-    TELEGRAM_MAX_BYTES,
-    check_telegram_size,
-    detect_mime,
-    telegram_send_selector,
-)
 from ai_agent.tools import cancel_pending_shell, confirm_pending_shell
 
 
@@ -224,8 +220,12 @@ def send_media_file(chat_id, path_or_bytes, filename=None, caption="", mime="", 
 
     path_or_bytes: filesystem path (str/Path) or raw bytes.
     On oversize: {"ok": False, "description": "…50 MB…", "skipped": True}.
+
+    media.py is imported here (not at module load) so a text DM still works
+    if the media helpers fail. The Telegram message handler does not call this.
     """
     from pathlib import Path as _P
+    from ai_agent.media import check_telegram_size, detect_mime, telegram_send_selector
 
     data = None
     name = filename or "file.bin"
@@ -274,6 +274,151 @@ def _is_allowed(chat_id):
 # ---------------------------------------------------------------------------
 # Shell YES/NO confirm over Telegram
 # ---------------------------------------------------------------------------
+
+def _pending_shell():
+    """Return pending dict {command, sudo} or None."""
+    if not PENDING_SHELL.exists():
+        return None
+    try:
+        data = json.loads(PENDING_SHELL.read_text(encoding="utf-8"))
+        cmd = (data.get("command") or "").strip()
+        if not cmd:
+            return None
+        return {"command": cmd, "sudo": bool(data.get("sudo"))}
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _try_delete_message(chat_id, message_id, token=None):
+    """Best-effort deleteMessage (e.g. after reading a sudo password). Never raises."""
+    if not message_id:
+        return
+    try:
+        api_call(
+            "deleteMessage",
+            {"chat_id": chat_id, "message_id": message_id},
+            token=token,
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def maybe_prompt_shell_confirm(chat_id, token=None):
+    """If a pending shell exists, ask the user to reply YES or NO (once per cmd)."""
+    pend = _pending_shell()
+    if not pend:
+        _last_shell_prompt.pop(chat_id, None)
+        return False
+    cmd = pend["command"]
+    prev = _last_shell_prompt.get(chat_id)
+    if prev == cmd:
+        return True  # already prompted for this command
+    if pend.get("sudo"):
+        msg = (
+            "Run sudo shell?\n`%s`\n"
+            "Reply YES <password> or Y <password> (or YES alone to try passwordless). "
+            "NO to cancel."
+        ) % cmd
+    else:
+        msg = "Run shell?\n`%s`\nReply YES or NO." % cmd
+    send_text(chat_id, msg, token=token)
+    _last_shell_prompt[chat_id] = cmd
+    return True
+
+
+def _parse_yes_no(text):
+    """Parse confirm reply. Returns ('yes', password_or_None) | ('no', None) | (None, None).
+
+    Accepts yes/YES/Yes/Y/y and no/NO/etc case-insensitive.
+    For sudo: YES <password> / Y <password> — password is the rest of the line.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return None, None
+    parts = raw.split(None, 1)
+    word = parts[0].lower()
+    rest = parts[1] if len(parts) > 1 else None
+    if word in ("yes", "y"):
+        return "yes", rest  # rest may be sudo password; None if plain YES
+    if word in ("no", "n"):
+        return "no", None
+    return None, None
+
+
+def _format_confirm_result(result):
+    """Build Telegram reply text from confirm_pending_shell result."""
+    if result.get("ok"):
+        stdout = (result.get("stdout") or "").strip()
+        stderr = (result.get("stderr") or "").strip()
+        body = []
+        if stdout:
+            body.append(stdout)
+        if stderr:
+            body.append(stderr)
+        if body:
+            return "Done.\n" + "\n".join(body)
+        return "Done."
+    return result.get("error") or "Command failed"
+
+
+def _handle_shell_reply(chat_id, text, token=None, message_id=None):
+    """If pending shell exists, handle YES/NO (or remind). Returns True if consumed.
+
+    For sudo pending: YES <password> feeds sudo -S. Plain YES tries sudo -n.
+    Password is never stored in memory files; best-effort delete of the TG message.
+    """
+    pend = _pending_shell()
+    if not pend:
+        return False
+    is_sudo = bool(pend.get("sudo"))
+    kind, secret = _parse_yes_no(text)
+    if kind == "yes":
+        password = None
+        had_password = False
+        if is_sudo:
+            if secret is not None and str(secret) != "":
+                password = str(secret)
+                had_password = True
+                # Best-effort: remove the message that contained the password.
+                _try_delete_message(chat_id, message_id, token=token)
+            # else: try sudo -n (password=None)
+        try:
+            result = confirm_pending_shell(password=password)
+        finally:
+            password = None
+            secret = None
+        _last_shell_prompt.pop(chat_id, None)
+        send_text(chat_id, _format_confirm_result(result), token=token)
+        # If sudo failed without a password, hint the YES <password> form.
+        if is_sudo and not result.get("ok") and not had_password:
+            err_blob = (
+                (result.get("stderr") or "")
+                + " "
+                + (result.get("error") or "")
+                + " "
+                + (result.get("stdout") or "")
+            ).lower()
+            if "password" in err_blob or result.get("exit_code") not in (None, 0):
+                send_text(
+                    chat_id,
+                    "Sudo needs a password — reply: YES yourpassword",
+                    token=token,
+                )
+        return True
+    if kind == "no":
+        cancel_pending_shell()
+        _last_shell_prompt.pop(chat_id, None)
+        send_text(chat_id, "Shell cancelled.", token=token)
+        return True
+    # Pending but not YES/NO — require a clear answer first.
+    if is_sudo:
+        send_text(chat_id, "Pending sudo — reply YES <password> or NO", token=token)
+    else:
+        send_text(chat_id, "Pending shell — reply YES or NO", token=token)
+    maybe_prompt_shell_confirm(chat_id, token=token)
+    return True
+
+
 # Reply enrich + media attach (no Download: http links on Telegram)
 # ---------------------------------------------------------------------------
 
@@ -425,7 +570,7 @@ def _download_telegram_file(file_id, token=None):
 
 
 def handle_message(update, token=None):
-    """Process one Telegram update (private text + photos for Vision)."""
+    """Process one Telegram update (private text only)."""
     msg = update.get("message") or update.get("edited_message")
     if not msg:
         return
@@ -452,52 +597,12 @@ def handle_message(update, token=None):
         # Quietly ignore unknown chats (no info leak).
         return
 
-    # Photo → Vision task (caption as prompt, else a short default).
-    photos = msg.get("photo") or []
-    if photos:
-        # Largest size is last.
-        file_id = photos[-1].get("file_id")
-        caption = (msg.get("caption") or "").strip() or "Describe this image."
-        raw, hint = _download_telegram_file(file_id, token=token)
-        if not raw:
-            send_text(chat_id, "Could not download photo: %s" % hint, token=token)
-            return
-        import base64
-        from ai_agent.tasks import run_task
-
-        provider = telegram_provider()
-        model = telegram_model()
-        hist = list(_history_for(chat_id))
-        image = {
-            "name": "telegram_photo.jpg",
-            "content": base64.b64encode(raw).decode("ascii"),
-            "encoding": "base64",
-            "mime": "image/jpeg",
-        }
-        result = run_task(
-            task="vision",
-            message=caption,
-            provider=provider,
-            model=model,
-            history=hist,
-            image=image,
-        )
-        reply = (result.get("reply") or "").strip()
-        if not result.get("ok"):
-            reply = reply or ("Error: %s" % (result.get("error") or "vision failed"))
-        if not reply:
-            reply = "(No reply)"
-        reply = enrich_telegram_text(reply, result.get("tools") or [])
-        send_text(chat_id, reply, token=token)
-        _append_history(chat_id, "user", "[photo] %s" % caption)
-        _append_history(chat_id, "assistant", reply)
-        try:
-            append_exchange("[photo] %s" % caption, reply)
-        except Exception:  # noqa: BLE001
-            pass
+    # Photos do not enter Vision and are not downloaded. Text chat only.
+    if msg.get("photo"):
+        send_text(chat_id, "Telegram is text chat only for now.", token=token)
         return
 
-    # Text messages only past this point (stickers / other media ignored).
+    # Text messages only past this point (stickers / video / documents ignored).
     text = msg.get("text")
     if text is None:
         return
@@ -512,46 +617,18 @@ def handle_message(update, token=None):
     provider = telegram_provider()
     model = telegram_model()
     hist = list(_history_for(chat_id))
-    # Default Telegram path stays Chat (+ tools). Optional prefixes:
-    # /image …  /video …  /vision … (vision without photo asks to send a photo).
-    task = "chat"
-    message = text
-    low = text.lower()
-    if low.startswith("/image "):
-        task, message = "image", text[7:].strip()
-    elif low.startswith("/video "):
-        task, message = "video", text[7:].strip()
-    elif low.startswith("/vision"):
-        send_text(chat_id, "Send a photo with a caption for Vision.", token=token)
-        return
-
-    if task == "chat":
-        result = run_chat(message, provider=provider, model=model, history=hist)
-    else:
-        from ai_agent.tasks import run_task
-
-        result = run_task(
-            task=task,
-            message=message,
-            provider=provider,
-            model=model,
-            history=hist,
-        )
+    # Every text DM goes to run_chat. /image /video /vision stay chat text.
+    # Do not start image/video/vision tasks, and do not attach files.
+    result = run_chat(text, provider=provider, model=model, history=hist)
     reply = (result.get("reply") or "").strip()
     if not result.get("ok"):
         err = result.get("error") or "chat failed"
         reply = reply or ("Error: %s" % err)
     if not reply:
         reply = "(No reply)"
-    # Strip download-link injection — files are attached below.
+    # Drop download-link markers. Reply is text only (no file upload).
     reply = enrich_telegram_text(reply, result.get("tools") or [])
     send_text(chat_id, reply, token=token)
-    # Attach write_file / generated media (sendPhoto/Video/Document, ≤50MB).
-    try:
-        send_result_media(chat_id, result, token=token)
-        send_tool_media(chat_id, result.get("tools") or [], token=token)
-    except Exception as e:  # noqa: BLE001
-        send_text(chat_id, "Attach error: %s" % e, token=token)
     _append_history(chat_id, "user", text)
     _append_history(chat_id, "assistant", reply)
     # Persist to chats/YYYY_MM/YYYY_MM_DD.md (same store as the web UI).

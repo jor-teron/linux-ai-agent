@@ -5,6 +5,9 @@ Talks to cloud APIs and local OpenAI-compatible runtimes (Ollama,
 llama.cpp) via stdlib urllib, and runs tool-call loops. Provider
 catalogs live in providers.py (re-exported through config).
 
+Online HTTP goes through ai_agent.ratelimit first (API_DELAY_SEC / RPM /
+RPD / TPM). Local ollama and llamacpp skip that limiter.
+
 Imports from: ai_agent.config, ai_agent.tools.
 Used by: server (run_chat), tools (plain chat for jobs, _http_json).
 """
@@ -24,6 +27,7 @@ from ai_agent.config import (
     provider_openai_base,
     resolve_use_tools,
 )
+from ai_agent.ratelimit import before_online_call, is_local_api_url
 from ai_agent.tools import TOOL_DECLS, anthropic_tools, build_system, dispatch, openai_tools
 
 
@@ -32,11 +36,29 @@ from ai_agent.tools import TOOL_DECLS, anthropic_tools, build_system, dispatch, 
 # ---------------------------------------------------------------------------
 
 
-def _http_json(url, body, headers, timeout=90):
-    """POST JSON and parse the JSON reply. Raises on HTTP/network errors."""
+def _http_json(url, body, headers, timeout=90, limit=None):
+    """POST JSON and parse the JSON reply. Raises on HTTP/network/rate errors.
+
+    Before the socket opens, online calls go through the shared limiter
+    (API_DELAY_SEC, RPM, RPD, TPM). limit=False skips it (local ollama /
+    llama.cpp — not a billed API). limit=None skips loopback and the
+    configured local base URLs. A RateLimited error starts with
+    "rate limited"; callers return {ok: False, error: ...} and do not retry.
+    """
+    try:
+        payload = body if isinstance(body, str) else json.dumps(body)
+    except (TypeError, ValueError):
+        payload = str(body)
+    apply_limit = limit
+    if apply_limit is None:
+        apply_limit = not is_local_api_url(url)
+    if apply_limit:
+        # payload chars feed the TPM estimate (real token counts not available).
+        before_online_call(payload, url=url, limit=True)
+    raw = payload.encode("utf-8") if isinstance(payload, str) else payload
     req = urllib.request.Request(
         url,
-        data=json.dumps(body).encode("utf-8"),
+        data=raw,
         headers=headers,
         method="POST",
     )
@@ -61,6 +83,8 @@ def _plain_chat(prompt, provider=None, model=None):
     key = provider_key(provider)
     if needs_key and not key:
         return {"ok": False, "error": "No API key for %s" % provider, "reply": ""}
+    # Local runtimes are not billed — do not consume RPM/RPD/TPM/delay.
+    api_limit = (meta.get("mode") or "online") != "local"
     try:
         if kind == "gemini":
             url = "%s/models/%s:generateContent?key=%s" % (GEMINI_API_BASE, model, key)
@@ -71,7 +95,7 @@ def _plain_chat(prompt, provider=None, model=None):
                     "generationConfig": {"maxOutputTokens": 1024},
                 },
                 {"Content-Type": "application/json"},
-                timeout=60,
+                timeout=60, limit=api_limit,
             )
             parts = (((data.get("candidates") or [{}])[0].get("content") or {}).get("parts")) or []
             texts = [p.get("text", "") for p in parts if "text" in p]
@@ -92,7 +116,7 @@ def _plain_chat(prompt, provider=None, model=None):
                     "max_tokens": 1024,
                 },
                 headers,
-                timeout=60,
+                timeout=60, limit=api_limit,
             )
             msg = ((data.get("choices") or [{}])[0].get("message") or {})
             reply = (msg.get("content") or "").strip() or "(No text)"
@@ -111,7 +135,7 @@ def _plain_chat(prompt, provider=None, model=None):
                     "x-api-key": key,
                     "anthropic-version": "2023-06-01",
                 },
-                timeout=60,
+                timeout=60, limit=api_limit,
             )
             texts = [
                 b.get("text", "")
@@ -289,6 +313,8 @@ def openai_compat_chat(provider, message, model, history, use_tools=True):
     if provider == "openrouter":
         headers["HTTP-Referer"] = "https://github.com/jor-teron/linux-ai-agent"
         headers["X-Title"] = "AI-Agent"
+    # Local ollama/llamacpp skip the limiter even if the base is not loopback.
+    api_limit = (meta.get("mode") or "online") != "local"
     tool_trace = []
     reply = ""
 
@@ -308,7 +334,7 @@ def openai_compat_chat(provider, message, model, history, use_tools=True):
             body["tools"] = openai_tools()
             body["tool_choice"] = "auto"
         try:
-            data = _http_json(url, body, headers, timeout=90)
+            data = _http_json(url, body, headers, timeout=90, limit=api_limit)
         except urllib.error.HTTPError as e:
             err = e.read().decode("utf-8", errors="replace")[:800]
             # Auto-fallback: model rejected tools → one plain retry (no tools).

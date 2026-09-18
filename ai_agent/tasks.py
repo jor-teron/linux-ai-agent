@@ -6,6 +6,9 @@ APIs when supported; vision sends an image + prompt to a multimodal model.
 Unsupported combinations return a friendly error (Local is never grayed out
 in the UI — we just explain when the runtime cannot do the task).
 
+Online provider HTTP uses brain._http_json, which applies the rate limiter.
+Local calls pass limit=False. This module does not talk to Telegram.
+
 Imports from: ai_agent.config, providers, brain, media, tools.
 Used by: server (/api/chat), telegram (optional task routing).
 """
@@ -31,6 +34,7 @@ from ai_agent.config import (
 )
 from ai_agent.media import detect_mime, save_generated_bytes
 from ai_agent.brain import _http_json, run_chat
+from ai_agent.ratelimit import RateLimited, before_online_call
 
 # Canonical task ids (UI order: Chat | Image | Video | Vision).
 TASKS = ("chat", "image", "video", "vision")
@@ -412,7 +416,8 @@ def _ollama_image(prompt, model, meta):
     url = ollama_base_url().rstrip("/") + "/api/generate"
     body = {"model": model, "prompt": prompt, "stream": False}
     try:
-        data = _http_json(url, body, {"Content-Type": "application/json"}, timeout=180)
+        # Local daemon — not a billed API (skip TPM/RPM/RPD/delay).
+        data = _http_json(url, body, {"Content-Type": "application/json"}, timeout=180, limit=False)
     except Exception as e:  # noqa: BLE001
         return _unsupported("image", "ollama", "Ollama image attempt failed: %s" % e)
     # Some forks return images: [b64...]
@@ -519,9 +524,21 @@ def _gemini_video(prompt, model, key):
             break
         time.sleep(4)
         try:
+            # Poll counts as an online Gemini call (same caps, no retry storm).
+            before_online_call(url=op_url)
             req = urllib.request.Request(op_url, method="GET")
             with urllib.request.urlopen(req, timeout=30) as resp:
                 last = json.loads(resp.read().decode("utf-8"))
+        except RateLimited as e:
+            return {
+                "ok": False,
+                "error": str(e),
+                "reply": "",
+                "tools": [],
+                "task": "video",
+                "model": veo,
+                "provider": "gemini",
+            }
         except Exception:  # noqa: BLE001
             continue
     if not last.get("done"):
@@ -756,12 +773,15 @@ def _openai_vision(provider, prompt, model, key, raw, mime, history, meta):
         "Content-Type": "application/json",
         "Authorization": "Bearer %s" % (key or "local"),
     }
+    # Local vision (ollama/llamacpp) is not billed; online vision is.
+    api_limit = (meta.get("mode") or "online") != "local"
     try:
         data = _http_json(
             url,
             {"model": model, "messages": messages, "max_tokens": 2048},
             headers,
             timeout=90,
+            limit=api_limit,
         )
     except Exception as e:  # noqa: BLE001
         return {
@@ -858,7 +878,11 @@ def _unsupported(task, provider, detail):
 
 
 def _fetch_url_bytes(url, timeout=60):
-    """GET raw bytes from a short-lived image URL (OpenAI images)."""
+    """GET raw bytes from a short-lived image URL (OpenAI images).
+
+    Not gated: the generations POST already counted against the limiter.
+    This is a CDN download of the result, not another billed API call.
+    """
     req = urllib.request.Request(url, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
