@@ -1,4 +1,4 @@
-Versioning: `0.39 (39)` — two-number sub-version + change # (`0.XX (N)`, not three-part semver). Counter +1 every release (never resets).
+Versioning: `0.41 (41)` — two-number sub-version + change # (`0.XX (N)`, not three-part semver). Counter +1 every release (never resets).
 
 - One-line install via `install.sh` (detects apt-get/dnf/yum/pacman/zypper/apk; most Linux distros)
 - Bubblewrap optional in install (`INSTALL_BWRAP=0/1` or prompt); install continues if bwrap unavailable
