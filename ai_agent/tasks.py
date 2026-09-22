@@ -18,6 +18,7 @@ import base64
 import json
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional
 
@@ -117,9 +118,13 @@ def _task_image(prompt, provider, model):
     if mode == "online":
         if kind == "gemini":
             return _gemini_image(prompt, model, key)
+        if kind == "pollinations":
+            return _pollinations_image(prompt, model, meta)
+        if kind == "segmind":
+            return _segmind_image(prompt, model, key, meta)
         if provider == "openai" or (kind == "openai" and provider == "openai"):
             return _openai_image(prompt, model, key)
-        # Other OpenAI-compat clouds: best-effort images endpoint, else clear msg.
+        # FreeTheAi + other OpenAI-compat clouds: /images/generations.
         if kind == "openai":
             return _openai_compat_image(provider, prompt, model, key, meta)
         return _unsupported("image", provider, "Online image generation is not wired for this provider.")
@@ -131,7 +136,7 @@ def _task_image(prompt, provider, model):
         "image",
         provider,
         "Local image generation is not available for %s. "
-        "Use Online (Gemini / OpenAI) or an Ollama image model if installed."
+        "Use Online (Gemini / OpenAI / Pollinations / Segmind) or an Ollama image model if installed."
         % (meta.get("label") or provider),
     )
 
@@ -362,24 +367,47 @@ def _openai_compat_image(provider, prompt, model, key, meta):
             "tools": [],
             "task": "image",
         }
+    # FreeTheAi catalog id gpt-image-2 → live alias eve/gpt-image-2.
+    call_model = model
+    if provider == "freetheai":
+        mid = (model or "").strip().lower()
+        if mid in ("gpt-image-2", "gpt-image-2-low", "gpt-image-2-medium"):
+            call_model = "eve/" + mid
+        elif mid and not mid.startswith(("eve/", "ever/")):
+            call_model = "eve/gpt-image-2"
     url = root + "/images/generations"
-    body = {"model": model, "prompt": prompt, "n": 1, "response_format": "b64_json"}
+    body = {"model": call_model, "prompt": prompt, "n": 1, "response_format": "b64_json"}
     headers = {
         "Content-Type": "application/json",
         "Authorization": "Bearer %s" % (key or "local"),
     }
     try:
-        data = _http_json(url, body, headers, timeout=120)
+        data = _http_json(url, body, headers, timeout=180)
     except Exception as e:  # noqa: BLE001
-        return _unsupported(
-            "image",
-            provider,
-            "Image generation not supported by %s (%s)." % (meta.get("label") or provider, e),
-        )
+        # Retry without response_format (some hosts reject it).
+        body.pop("response_format", None)
+        try:
+            data = _http_json(url, body, headers, timeout=180)
+        except Exception as e2:  # noqa: BLE001
+            return _unsupported(
+                "image",
+                provider,
+                "Image generation not supported by %s (%s)." % (meta.get("label") or provider, e2),
+            )
     items = data.get("data") or []
-    if not items or not items[0].get("b64_json"):
+    if not items:
         return _unsupported("image", provider, "No image data from provider.")
-    raw = base64.b64decode(items[0]["b64_json"])
+    item = items[0]
+    raw = None
+    if item.get("b64_json"):
+        raw = base64.b64decode(item["b64_json"])
+    elif item.get("url"):
+        try:
+            raw = _fetch_url_bytes(item["url"])
+        except Exception as e:  # noqa: BLE001
+            return _unsupported("image", provider, "Failed to download image URL: %s" % e)
+    if not raw:
+        return _unsupported("image", provider, "No image data from provider.")
     saved = save_generated_bytes(raw, stem="image", mime="image/png")
     if not saved.get("ok"):
         return {**saved, "task": "image", "tools": [], "reply": ""}
@@ -389,8 +417,173 @@ def _openai_compat_image(provider, prompt, model, key, meta):
         "reply": reply,
         "tools": [],
         "task": "image",
-        "model": model,
+        "model": call_model,
         "provider": provider,
+        "media": saved,
+        "media_list": [saved],
+    }
+
+
+# Segmind catalog id → API slug (https://api.segmind.com/v1/<slug>).
+_SEGMIND_SLUGS = {
+    "sdxl": "sdxl1.0-txt2img",
+    "flux": "flux-schnell",
+    "realistic-vision": "sd1.5-realisticvision",
+}
+
+
+def _pollinations_image(prompt, model, meta):
+    """Keyless GET image.pollinations.ai/prompt/<quote>?model=…"""
+    mid = (model or "flux").strip() or "flux"
+    if mid.lower() in ("pollinations", "default"):
+        mid = "flux"
+    base = (meta.get("base") or "https://image.pollinations.ai").rstrip("/")
+    # Public CDN-style endpoint — not a billed API; still gate lightly via before_online_call
+    # only if we go through _http_json. Use direct GET for raw bytes.
+    q = urllib.parse.quote(prompt, safe="")
+    url = "%s/prompt/%s?model=%s" % (base, q, urllib.parse.quote(mid, safe=""))
+    try:
+        before_online_call(url=url)
+        req = urllib.request.Request(url, method="GET")
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            raw = resp.read()
+            ctype = (resp.headers.get("Content-Type") or "image/jpeg").split(";")[0].strip()
+    except RateLimited as e:
+        return {"ok": False, "error": str(e), "reply": "", "tools": [], "task": "image", "provider": "pollinations"}
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": "Pollinations image failed: %s" % e,
+            "reply": "",
+            "tools": [],
+            "task": "image",
+            "provider": "pollinations",
+        }
+    if not raw or len(raw) < 100:
+        return _unsupported("image", "pollinations", "Pollinations returned empty/short payload.")
+    mime = ctype if ctype.startswith("image/") else "image/jpeg"
+    saved = save_generated_bytes(raw, stem="image", mime=mime)
+    if not saved.get("ok"):
+        return {**saved, "task": "image", "tools": [], "reply": ""}
+    reply = "Generated image: %s\n[[download:%s]]" % (saved["name"], saved["name"])
+    return {
+        "ok": True,
+        "reply": reply,
+        "tools": [],
+        "task": "image",
+        "model": mid,
+        "provider": "pollinations",
+        "media": saved,
+        "media_list": [saved],
+    }
+
+
+def _segmind_image(prompt, model, key, meta):
+    """POST api.segmind.com/v1/<slug> with x-api-key; raw image or JSON."""
+    if not key:
+        return {
+            "ok": False,
+            "error": "SEGMIND_API_KEY missing",
+            "reply": "",
+            "tools": [],
+            "task": "image",
+        }
+    mid = (model or "flux").strip().lower()
+    slug = _SEGMIND_SLUGS.get(mid, mid)
+    base = (meta.get("base") or "https://api.segmind.com/v1").rstrip("/")
+    url = "%s/%s" % (base, slug)
+    body = {"prompt": prompt}
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": key,
+    }
+    try:
+        before_online_call(url=url)
+        payload = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            raw = resp.read()
+            ctype = (resp.headers.get("Content-Type") or "").lower()
+    except RateLimited as e:
+        return {"ok": False, "error": str(e), "reply": "", "tools": [], "task": "image", "provider": "segmind"}
+    except urllib.error.HTTPError as e:
+        err = e.read().decode("utf-8", errors="replace")[:600]
+        return {
+            "ok": False,
+            "error": "Segmind HTTP %s: %s" % (e.code, err),
+            "reply": "",
+            "tools": [],
+            "task": "image",
+            "provider": "segmind",
+        }
+    except Exception as e:  # noqa: BLE001
+        return {
+            "ok": False,
+            "error": "Segmind image failed: %s" % e,
+            "reply": "",
+            "tools": [],
+            "task": "image",
+            "provider": "segmind",
+        }
+    img_bytes = None
+    mime = "image/png"
+    if "application/json" in ctype or (raw[:1] in (b"{", b"[")):
+        try:
+            data = json.loads(raw.decode("utf-8", errors="replace"))
+        except Exception:  # noqa: BLE001
+            data = None
+        if isinstance(data, dict):
+            b64 = (
+                data.get("image")
+                or data.get("b64_json")
+                or (data.get("data") or [{}])[0].get("b64_json")
+                if isinstance(data.get("data"), list) and data.get("data")
+                else None
+            )
+            # Some Segmind JSON wraps under output / images.
+            if not b64 and isinstance(data.get("output"), str):
+                b64 = data["output"]
+            if not b64 and isinstance(data.get("images"), list) and data["images"]:
+                first = data["images"][0]
+                b64 = first if isinstance(first, str) else (first or {}).get("image")
+            if b64:
+                # Strip data-URL prefix if present.
+                if isinstance(b64, str) and "," in b64 and b64.strip().startswith("data:"):
+                    b64 = b64.split(",", 1)[1]
+                try:
+                    img_bytes = base64.b64decode(b64)
+                except Exception:  # noqa: BLE001
+                    img_bytes = None
+            elif data.get("url") or data.get("image_url"):
+                try:
+                    img_bytes = _fetch_url_bytes(data.get("url") or data.get("image_url"))
+                except Exception as e:  # noqa: BLE001
+                    return {
+                        "ok": False,
+                        "error": "Segmind URL download failed: %s" % e,
+                        "reply": "",
+                        "tools": [],
+                        "task": "image",
+                    }
+    else:
+        img_bytes = raw
+        if "jpeg" in ctype or "jpg" in ctype:
+            mime = "image/jpeg"
+        elif "webp" in ctype:
+            mime = "image/webp"
+    if not img_bytes or len(img_bytes) < 100:
+        return _unsupported("image", "segmind", "Segmind returned no image bytes.")
+    saved = save_generated_bytes(img_bytes, stem="image", mime=mime)
+    if not saved.get("ok"):
+        return {**saved, "task": "image", "tools": [], "reply": ""}
+    reply = "Generated image: %s\n[[download:%s]]" % (saved["name"], saved["name"])
+    return {
+        "ok": True,
+        "reply": reply,
+        "tools": [],
+        "task": "image",
+        "model": mid,
+        "provider": "segmind",
         "media": saved,
         "media_list": [saved],
     }
@@ -466,17 +659,149 @@ def _task_video(prompt, provider, model):
             "video",
             provider,
             "Local video generation is not available yet. "
-            "Switch Mode to Online and try Gemini (Veo) if your key has access.",
+            "Switch Mode to Online and try Gemini (Veo) or Agnes if your key has access.",
         )
     if kind == "gemini":
         return _gemini_video(prompt, model, key)
+    if kind == "agnes":
+        return _agnes_video(prompt, model, key, meta)
     return _unsupported(
         "video",
         provider,
         "Video generation is not supported for %s in this agent. "
-        "Try Gemini Online (Veo) when available on your API key."
+        "Try Gemini Online (Veo) or Agnes when available on your API key."
         % (meta.get("label") or provider),
     )
+
+
+def _agnes_video(prompt, model, key, meta):
+    """Agnes AI: POST /v1/videos then poll GET /agnesapi?video_id=… (best-effort)."""
+    if not key:
+        return {
+            "ok": False,
+            "error": "AGNES_API_KEY missing",
+            "reply": "",
+            "tools": [],
+            "task": "video",
+        }
+    base = (meta.get("base") or "https://apihub.agnes-ai.com/v1").rstrip("/")
+    # Hub root without /v1 for /agnesapi poll.
+    hub = base
+    if hub.endswith("/v1"):
+        hub = hub[:-3].rstrip("/") or "https://apihub.agnes-ai.com"
+    mid = (model or "agnes-video-v2.0").strip()
+    create_url = base + "/videos"
+    body = {
+        "model": mid,
+        "mode": "text",
+        "prompt": prompt,
+        "size": "720P",
+        "aspect_ratio": "16:9",
+        "seconds": "5",
+        "n": 1,
+    }
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer %s" % key,
+    }
+    try:
+        data = _http_json(create_url, body, headers, timeout=60)
+    except urllib.error.HTTPError as e:
+        err = e.read().decode("utf-8", errors="replace")[:600]
+        return _unsupported(
+            "video",
+            "agnes",
+            "Agnes video create failed (HTTP %s: %s)." % (e.code, err[:200]),
+        )
+    except Exception as e:  # noqa: BLE001
+        return _unsupported("video", "agnes", "Agnes video create failed: %s" % e)
+
+    video_id = data.get("video_id") or data.get("id") or data.get("task_id")
+    if not video_id:
+        return _unsupported("video", "agnes", "Agnes returned no video_id.")
+
+    # Poll until completed/failed (cap ~3 minutes).
+    poll_q = urllib.parse.urlencode({"video_id": video_id, "model_name": mid})
+    poll_url = "%s/agnesapi?%s" % (hub, poll_q)
+    deadline = time.time() + 180
+    last = data
+    while time.time() < deadline:
+        status = (last.get("status") or "").lower()
+        if status in ("completed", "succeeded", "success", "done"):
+            break
+        if status in ("failed", "error", "cancelled", "canceled"):
+            return {
+                "ok": False,
+                "error": "Agnes video failed: %s" % (last.get("error") or last.get("message") or status),
+                "reply": "",
+                "tools": [],
+                "task": "video",
+                "model": mid,
+                "provider": "agnes",
+            }
+        time.sleep(2)
+        try:
+            before_online_call(url=poll_url)
+            req = urllib.request.Request(
+                poll_url,
+                headers={"Authorization": "Bearer %s" % key},
+                method="GET",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                last = json.loads(resp.read().decode("utf-8"))
+        except RateLimited as e:
+            return {
+                "ok": False,
+                "error": str(e),
+                "reply": "",
+                "tools": [],
+                "task": "video",
+                "model": mid,
+                "provider": "agnes",
+            }
+        except Exception:  # noqa: BLE001
+            continue
+    status = (last.get("status") or "").lower()
+    if status not in ("completed", "succeeded", "success", "done"):
+        return {
+            "ok": False,
+            "error": "Agnes video timed out (still running). Try again later.",
+            "reply": "",
+            "tools": [],
+            "task": "video",
+            "model": mid,
+            "provider": "agnes",
+        }
+    # Prefer metadata.url / url / download_url
+    meta_blob = last.get("metadata") if isinstance(last.get("metadata"), dict) else {}
+    vurl = (
+        meta_blob.get("url")
+        or last.get("url")
+        or last.get("download_url")
+        or last.get("video_url")
+    )
+    raw = None
+    if vurl:
+        try:
+            raw = _fetch_url_bytes(vurl, timeout=120)
+        except Exception as e:  # noqa: BLE001
+            return {
+                "ok": False,
+                "error": "Agnes video download failed: %s" % e,
+                "reply": "",
+                "tools": [],
+                "task": "video",
+                "provider": "agnes",
+            }
+    if not raw:
+        # Nested base64 fallback
+        raw = _extract_video_bytes(last)
+    if not raw:
+        return _unsupported("video", "agnes", "Agnes finished but no video bytes/URL were returned.")
+    # Save with provider tag (reuse helper but fix provider field after).
+    out = _save_video_result(raw, mid)
+    out["provider"] = "agnes"
+    return out
 
 
 def _gemini_video(prompt, model, key):
@@ -670,6 +995,7 @@ def _task_vision(prompt, provider, model, history=None, image=None, image_name="
 
     if kind == "gemini":
         return _gemini_vision(prompt, model, key, raw, mime, history)
+    # OpenAI-compat vision (OpenAI, xAI, DeepSeek, OpenRouter, DeepInfra, Zhipu, Groq, …).
     if kind == "openai":
         return _openai_vision(provider, prompt, model, key, raw, mime, history, meta)
     if kind == "anthropic":

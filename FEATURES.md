@@ -1,4 +1,4 @@
-Versioning: `0.41 (41)` — two-number sub-version + change # (`0.XX (N)`, not three-part semver). Counter +1 every release (never resets).
+Versioning: `0.42 (42)` — two-number sub-version + change # (`0.XX (N)`, not three-part semver). Counter +1 every release (never resets).
 
 - One-line install via `install.sh` (detects apt-get/dnf/yum/pacman/zypper/apk; most Linux distros)
 - Bubblewrap optional in install (`INSTALL_BWRAP=0/1` or prompt); install continues if bwrap unavailable
@@ -21,7 +21,7 @@ Versioning: `0.41 (41)` — two-number sub-version + change # (`0.XX (N)`, not t
 - **Editable prompts** — `prompt_chat` / `prompt_tools` / `prompt_image` / `prompt_video` / `prompt_vision`
 - **Token trim** — `TOOLS_DEFAULT=0`; UI **Tools** checkbox; keyword boost; `HISTORY_TURNS=10`
 - **Online / Local modes** — Mode before Provider; catalogs for all tasks
-- **Multi-provider chat (online)** — gemini, openai, xai, anthropic, deepseek, openrouter, deepinfra
+- **Multi-provider chat (online)** — gemini, openai, xai, anthropic, deepseek, openrouter, deepinfra; media: segmind/freetheai/pollinations (image), agnes (video), zhipu/groq (vision)
 - **Local providers** — Ollama + llama.cpp; OpenAI-compatible; no API key
 - **Status LED** — green solid when ready; red blink when not; `STATUS_BLINK_MS`
 - **Workspace folders** — jail = `~/ai-workspace` with `chats/`, `memory/` (date/topics + md), `workspace/`, `workspace/generated/`, `test/`, `trash/`, `user/`

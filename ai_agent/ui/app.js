@@ -84,13 +84,19 @@ function applyBlinkMs(ms){
   catalog.status_blink_ms=v;
 }
 
-/** Providers visible for the current Mode selection. */
+/** Providers visible for current Mode + Task (server already filters by ?task=). */
 function providersForMode(){
   const m=(modeSel.value||'online');
+  const task=(taskSel.value||'chat');
   const out={};
   Object.keys(catalog.providers||{}).forEach(pid=>{
     const meta=catalog.providers[pid]||{};
-    if((meta.mode||'online')===m) out[pid]=meta;
+    if((meta.mode||'online')!==m) return;
+    const tasks=meta.tasks;
+    // Missing tasks → treat as chat-only (matches server default).
+    const list=(tasks&&tasks.length)?tasks:['chat'];
+    if(task && list.indexOf(task)<0) return;
+    out[pid]=meta;
   });
   return out;
 }

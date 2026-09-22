@@ -90,6 +90,7 @@ ONLINE_PROVIDERS: Dict[str, Dict[str, Any]] = {
         "base": "https://api.x.ai/v1",
         "models": ["grok-4.3", "grok-3-mini", "grok-4.6", "grok-4.5"],
         "default": "grok-4.3",
+        "tasks": ["chat"],
     },
     "anthropic": {
         "label": "Anthropic (Claude)",
@@ -100,6 +101,7 @@ ONLINE_PROVIDERS: Dict[str, Dict[str, Any]] = {
         "base": "https://api.anthropic.com/v1",
         "models": ["claude-haiku-4-5", "claude-sonnet-5", "claude-sonnet-4-6"],
         "default": "claude-haiku-4-5",
+        "tasks": ["chat"],
     },
     "deepseek": {
         "label": "DeepSeek",
@@ -110,6 +112,7 @@ ONLINE_PROVIDERS: Dict[str, Dict[str, Any]] = {
         "base": "https://api.deepseek.com/v1",
         "models": ["deepseek-chat", "deepseek-reasoner"],
         "default": "deepseek-chat",
+        "tasks": ["chat"],
     },
     "openrouter": {
         "label": "OpenRouter",
@@ -125,6 +128,7 @@ ONLINE_PROVIDERS: Dict[str, Dict[str, Any]] = {
             "meta-llama/llama-3.3-70b-instruct",
         ],
         "default": "openrouter/auto",
+        "tasks": ["chat"],
     },
     "deepinfra": {
         "label": "DeepInfra",
@@ -140,6 +144,94 @@ ONLINE_PROVIDERS: Dict[str, Dict[str, Any]] = {
             "mistralai/Mistral-7B-Instruct-v0.3",
         ],
         "default": "meta-llama/Meta-Llama-3.1-8B-Instruct",
+        "tasks": ["chat"],
+    },
+    # --- Image specialists (v0.42) ---
+    # Segmind: POST https://api.segmind.com/v1/<slug> with x-api-key; body JSON;
+    # response is raw image bytes (or JSON with image). Slug map lives in tasks.py.
+    "segmind": {
+        "label": "Segmind",
+        "mode": "online",
+        "needs_key": True,
+        "env_key": "SEGMIND_API_KEY",
+        "kind": "segmind",
+        "base": "https://api.segmind.com/v1",
+        "models": [
+            {"id": "sdxl", "label": "SDXL"},
+            {"id": "flux", "label": "FLUX"},
+            {"id": "realistic-vision", "label": "Realistic Vision"},
+        ],
+        "default": "flux",
+        "tasks": ["image"],
+    },
+    # FreeTheAi: OpenAI-compat /images/generations (Bearer FREETHEAI_API_KEY).
+    # Catalog id gpt-image-2; tasks.py maps to eve/gpt-image-2 for the live call.
+    "freetheai": {
+        "label": "FreeTheAi",
+        "mode": "online",
+        "needs_key": True,
+        "env_key": "FREETHEAI_API_KEY",
+        "kind": "openai",
+        "base": "https://api.freetheai.xyz/v1",
+        "models": ["gpt-image-2"],
+        "default": "gpt-image-2",
+        "tasks": ["image"],
+    },
+    # Pollinations: keyless GET https://image.pollinations.ai/prompt/<prompt>
+    # Unlimited public image endpoint; always ready (needs_key False).
+    "pollinations": {
+        "label": "Pollinations.ai",
+        "mode": "online",
+        "needs_key": False,
+        "env_key": "",
+        "kind": "pollinations",
+        "base": "https://image.pollinations.ai",
+        "models": [
+            {"id": "flux", "label": "FLUX (Pollinations)"},
+            {"id": "pollinations", "label": "Pollinations (default)"},
+        ],
+        "default": "flux",
+        "tasks": ["image"],
+    },
+    # --- Video specialists (v0.42) ---
+    # Agnes: POST /v1/videos then poll GET /agnesapi?video_id=… (Bearer AGNES_API_KEY).
+    # InferencePort localhost:8080 deferred — do not add in this release.
+    "agnes": {
+        "label": "Agnes AI",
+        "mode": "online",
+        "needs_key": True,
+        "env_key": "AGNES_API_KEY",
+        "kind": "agnes",
+        "base": "https://apihub.agnes-ai.com/v1",
+        "models": ["agnes-video-v2.0"],
+        "default": "agnes-video-v2.0",
+        "tasks": ["video"],
+    },
+    # --- Vision specialists (v0.42) ---
+    # Zhipu GLM-4V: OpenAI-compat chat + image_url (ZHIPU_API_KEY).
+    "zhipu": {
+        "label": "Zhipu (GLM)",
+        "mode": "online",
+        "needs_key": True,
+        "env_key": "ZHIPU_API_KEY",
+        "kind": "openai",
+        "base": "https://open.bigmodel.cn/api/paas/v4",
+        "models": ["glm-4v-flash"],
+        "default": "glm-4v-flash",
+        # Vision-only so Chat list stays clean.
+        "tasks": ["vision"],
+    },
+    # Groq vision preview: OpenAI-compat (GROQ_API_KEY).
+    "groq": {
+        "label": "Groq",
+        "mode": "online",
+        "needs_key": True,
+        "env_key": "GROQ_API_KEY",
+        "kind": "openai",
+        "base": "https://api.groq.com/openai/v1",
+        "models": ["llama-3.2-11b-vision-preview"],
+        "default": "llama-3.2-11b-vision-preview",
+        "tasks": ["vision"],
     },
 }
 
@@ -231,7 +323,8 @@ LOCAL_PROVIDERS: Dict[str, Dict[str, Any]] = {
         "models": _OLLAMA_MODELS,
         "default": "llama3.2:3b",
         "tags_note": "Install models with: ollama pull <tag>",
-        "tasks": ["chat", "image", "vision", "video"],
+        # Chat-focused curated list (no image/video generators in the stock list).
+        "tasks": ["chat"],
     },
     "llamacpp": {
         "label": "llama.cpp",
@@ -249,7 +342,7 @@ LOCAL_PROVIDERS: Dict[str, Dict[str, Any]] = {
         "models": _LLAMACPP_MODELS,
         "default": "llama-3.2-3b",
         "tags_note": "Load a GGUF in llama-server; curated ids are hints for the UI",
-        "tasks": ["chat", "vision"],
+        "tasks": ["chat"],
     },
 }
 
@@ -461,7 +554,8 @@ def keys_status() -> Dict[str, bool]:
         if meta.get("needs_key", True):
             out[pid] = bool(provider_key(pid))
         else:
-            out[pid] = False
+            # Keyless online (Pollinations) or local — treat as "keyed" for UI.
+            out[pid] = True
     return out
 
 
@@ -639,6 +733,17 @@ def provider_ready(
     label = meta["label"]
     mode = meta["mode"]
     if mode == "online":
+        # Keyless online providers (e.g. Pollinations) are always ready.
+        if not meta.get("needs_key", True):
+            return {
+                "ready": True,
+                "mode": mode,
+                "reason": "ok",
+                "has_key": True,
+                "reachable": None,
+                "model_installed": None,
+                "label": label,
+            }
         has = bool(provider_key(provider))
         return {
             "ready": has,
@@ -702,9 +807,9 @@ def readiness_status(selected_provider: Optional[str] = None, selected_model: Op
 # ---------------------------------------------------------------------------
 # Task → model filtering (Chat | Image | Video | Vision)
 # ---------------------------------------------------------------------------
-# Online + Local catalogs stay available for every task (UI never grays out
-# Local). When a task is selected we prefer models that look capable; if the
-# filter would empty the list we fall back to the full curated list.
+# Chat soft-filters generators. Image/Video/Vision return the filtered list
+# even when empty (no fallback to full catalog). catalog_for_api omits
+# providers whose tasks list does not include the requested task.
 
 
 TASK_IDS = ("chat", "image", "video", "vision")
@@ -715,8 +820,21 @@ def _model_matches_task(mid: str, task: str) -> bool:
     m = (mid or "").lower()
     task = (task or "chat").lower()
     if task == "chat":
-        # Hide dedicated image/video generators from Chat list when obvious.
-        if any(x in m for x in ("dall-e", "gpt-image", "imagen", "veo-", "-image", "flash-image")):
+        # Hide dedicated image/video generators from Chat.
+        hide = (
+            "dall-e",
+            "gpt-image",
+            "imagen",
+            "veo-",
+            "flux",
+            "sdxl",
+            "stable-diffusion",
+            "realistic-vision",
+            "pollinations",
+            "agnes-video",
+            "-image",  # e.g. gemini-*-image, flash-image
+        )
+        if any(x in m for x in hide):
             return False
         return True
     if task == "image":
@@ -730,47 +848,75 @@ def _model_matches_task(mid: str, task: str) -> bool:
                 "flux",
                 "sdxl",
                 "stable-diffusion",
+                "realistic-vision",
+                "pollinations",
             )
         )
     if task == "video":
-        return "veo" in m or "video" in m
+        return any(
+            x in m
+            for x in (
+                "veo",
+                "video",
+                "agnes-video",
+                "kling",
+                "wan",
+                "vidu",
+                "seedance",
+            )
+        )
     if task == "vision":
-        # Most chat multimodal models work; exclude pure generators.
-        if any(x in m for x in ("dall-e", "gpt-image", "imagen", "veo-", "flux")):
-            return False
-        return True
+        # Explicit vision markers, or known multimodal chat ids — NOT everything.
+        if any(x in m for x in ("vision", "vl-", "4v", "llava", "moondream")):
+            return True
+        if "gpt-4o" in m:
+            return True
+        # Gemini flash/pro chat multimodal — exclude pure image/veo generators.
+        if "gemini" in m and ("flash" in m or "pro" in m):
+            if any(x in m for x in ("image", "veo", "imagen")):
+                return False
+            return True
+        return False
     return True
 
 
 def filter_models_for_task(models, task: str):
-    """Filter [{id,label}|str] list for task; fallback to full list if empty."""
+    """Filter [{id,label}|str] list for task.
+
+    Chat: soft-filter (drop generators; if somehow empty, keep original).
+    Image/Video/Vision: return filtered even when empty — NO full-list fallback.
+    """
     task = (task or "chat").lower()
-    if task == "chat" or not task:
-        # Still drop pure generators from chat for cleaner UX.
-        filtered = []
-        for entry in models or []:
-            mid = model_id(entry)
-            if _model_matches_task(mid, "chat"):
-                filtered.append(entry)
-        return filtered if filtered else list(models or [])
     filtered = []
     for entry in models or []:
         mid = model_id(entry)
         if _model_matches_task(mid, task):
             filtered.append(entry)
-    # Fallback: show full catalog so Local/Online never look empty.
-    return filtered if filtered else list(models or [])
+    if task == "chat" or not task:
+        return filtered if filtered else list(models or [])
+    # Media tasks: empty is intentional (provider may be omitted by catalog).
+    return filtered
 
 
 def catalog_for_api(task: Optional[str] = None) -> Dict[str, Any]:
     """Structured catalog for GET /api/models (modes + providers + models).
 
-    Optional task=chat|image|video|vision filters model lists when sensible;
-    Online and Local providers remain listed for every task.
+    When task is set:
+      - omit providers whose `tasks` does not include that task
+      - missing `tasks` defaults to ["chat"] only (not all TASK_IDS)
+      - model lists are filtered (media: no empty→full fallback)
     """
     task_l = (task or "").strip().lower() or None
     providers_out: Dict[str, Any] = {}
     for pid, meta in PROVIDERS.items():
+        # Default missing tasks → chat only (not every TASK_ID).
+        ptasks = meta.get("tasks")
+        if not ptasks:
+            ptasks = ["chat"]
+        else:
+            ptasks = list(ptasks)
+        if task_l and task_l not in ptasks:
+            continue
         models = models_for_api(meta)
         if task_l:
             models = [
@@ -783,7 +929,7 @@ def catalog_for_api(task: Optional[str] = None) -> Dict[str, Any]:
             "needs_key": bool(meta.get("needs_key", True)),
             "models": models,
             "default": meta.get("default") or "",
-            "tasks": meta.get("tasks") or list(TASK_IDS),
+            "tasks": ptasks,
         }
     dp = default_provider()
     return {

@@ -1,6 +1,6 @@
 # AI Agent
 
-Version: see `VERSION` (e.g. `0.40 (40)`).
+Version: see `VERSION` (e.g. `0.42 (42)`).
 
 Tiny browser chat agent for Linux. Talk in the browser or Telegram. Use cloud APIs (Online) or models on your PC (Local).
 
@@ -69,6 +69,12 @@ Telegram is **text only** for now (no photo/file sends from the bot).
 | deepseek | `DEEPSEEK_API_KEY` | https://platform.deepseek.com/ |
 | openrouter | `OPENROUTER_API_KEY` | https://openrouter.ai/keys |
 | deepinfra | `DEEPINFRA_API_KEY` | https://deepinfra.com/dash/api_keys |
+| segmind (image) | `SEGMIND_API_KEY` | https://www.segmind.com/ |
+| freetheai (image) | `FREETHEAI_API_KEY` | https://freetheai.xyz / api.freetheai.xyz |
+| pollinations (image) | *(none — keyless)* | https://pollinations.ai |
+| agnes (video) | `AGNES_API_KEY` | https://agnes-ai.com |
+| zhipu (vision) | `ZHIPU_API_KEY` | https://open.bigmodel.cn |
+| groq (vision) | `GROQ_API_KEY` | https://console.groq.com/keys |
 
 Same keys cover Chat / Image / Vision / Video when that provider allows it. Never commit `.env`.
 
