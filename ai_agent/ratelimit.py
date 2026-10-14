@@ -52,6 +52,60 @@ _day_key = ""
 _day_count = 0
 
 
+# Per-thread "Limits" switch from the web UI (v0.46). None = follow .env.
+# Each HTTP request runs on its own server thread, so one user's switch
+# never leaks into Telegram or another request.
+_override = threading.local()
+
+
+class limits_override:
+    """Context manager: run a block with the UI Limits switch applied.
+
+    enabled=None  → normal .env behaviour (nothing changes).
+    enabled=False → online calls skip API_DELAY_SEC / RPM / RPD / TPM waits
+                    and caps, but are still counted so RPD stays accurate.
+    enabled=True  → normal .env behaviour.
+    """
+
+    def __init__(self, enabled):
+        self.enabled = enabled
+        self.prev = None
+
+    def __enter__(self):
+        self.prev = getattr(_override, "enabled", None)
+        _override.enabled = self.enabled
+        return self
+
+    def __exit__(self, *exc):
+        _override.enabled = self.prev
+        return False
+
+
+def limits_disabled():
+    """True when the current thread asked to turn limits off (UI switch)."""
+    return getattr(_override, "enabled", None) is False
+
+
+def _record_only(payload):
+    """Count one online call (RPM/RPD/TPM history) without waiting or capping.
+
+    Used when Limits is off, so later calls with Limits on still see real usage.
+    """
+    global _day_key, _day_count, _last_mono
+    tokens = estimate_tokens(payload)
+    with _lock:
+        now = time.monotonic()
+        _prune(now)
+        day = _calendar_day()
+        if day != _day_key:
+            _day_key = day
+            _day_count = 0
+        _last_mono = now
+        _req_times.append(now)
+        _tok_times.append((now, tokens))
+        _day_count += 1
+
+
 class RateLimited(Exception):
     """Call must not proceed. str(exc) always starts with 'rate limited'."""
 
@@ -181,6 +235,10 @@ def before_online_call(payload=None, url=None, limit=None):
     if limit is False:
         return
     if limit is None and is_local_api_url(url):
+        return
+    # UI Limits switch off (v0.46): count the call, but never wait or refuse.
+    if limits_disabled():
+        _record_only(payload)
         return
 
     # Read knobs outside the lock (they hit disk). 0 means that knob is off.

@@ -105,7 +105,7 @@ It runs a small web server on the PC. You chat in the browser or on Telegram, an
 - Shell and sudo always need a Confirm (web) or YES / NO (Telegram)
 - Optional Bubblewrap sandbox
 - Memory of facts, plus daily Markdown chat logs
-- API rate limits set in `.env`
+- API rate limits set in `.env`, with a Limits switch (auto off for Local)
 - Soft light and dark themes, plus an Update button
 - Tokens/sec under each reply; folded "Thinking" box and a Think on/off switch (e.g. qwen3:1.7b)
 

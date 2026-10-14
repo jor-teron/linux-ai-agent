@@ -271,6 +271,10 @@ class Handler(BaseHTTPRequestHandler):
         think_flag = data.get("think", None)
         if think_flag is not None:
             think_flag = bool(think_flag)
+        # Optional Limits toggle (v0.46). None → .env limits as before.
+        limits_flag = data.get("limits", None)
+        if limits_flag is not None:
+            limits_flag = bool(limits_flag)
         result = run_task(
             task=task,
             message=message,
@@ -281,6 +285,7 @@ class Handler(BaseHTTPRequestHandler):
             image=data.get("image"),
             image_name=(data.get("image_name") or "").strip(),
             think=think_flag,
+            limits=limits_flag,
         )
         # Persist completed exchange to chats/YYYY_MM/YYYY_MM_DD.md (source of truth).
         # Do this for both ok and error replies so refresh still shows the turn.

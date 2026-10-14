@@ -16,6 +16,8 @@ import re
 import time
 import urllib.error
 import urllib.request
+
+from ai_agent.ratelimit import limits_override
 from ai_agent.config import (
     DEFAULT_PROVIDER,
     GEMINI_API_BASE,
@@ -649,7 +651,18 @@ def anthropic_chat(message, model, history, use_tools=True):
 # ---------------------------------------------------------------------------
 
 
-def run_chat(message, provider=None, model=None, history=None, use_tools=None, think=None):
+def run_chat(message, provider=None, model=None, history=None, use_tools=None, think=None, limits=None):
+    """Public chat entry: applies the UI Limits switch, then dispatches.
+
+    limits: None = .env limits (Telegram, default); False = skip waits/caps
+    for this call (usage still counted); True = .env limits.
+    Local providers are never limited either way.
+    """
+    with limits_override(limits):
+        return _run_chat(message, provider, model, history, use_tools, think)
+
+
+def _run_chat(message, provider=None, model=None, history=None, use_tools=None, think=None):
     """Pick the right chat function from PROVIDERS[id].kind (online + local).
 
     think: None = untouched; True/False = Think toggle (OpenAI-compat path only).

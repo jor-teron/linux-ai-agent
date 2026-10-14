@@ -46,7 +46,7 @@ TASKS = ("chat", "image", "video", "vision")
 # ---------------------------------------------------------------------------
 
 
-def run_task(
+def _run_task(
     task="chat",
     message="",
     provider=None,
@@ -1214,3 +1214,16 @@ def _fetch_url_bytes(url, timeout=60):
     req = urllib.request.Request(url, method="GET")
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read()
+
+
+def run_task(*args, limits=None, **kwargs):
+    """Run one task with the UI Limits switch applied (v0.46).
+
+    limits: None = .env limits; False = skip waits/caps for every online
+    call in this task (chat and media), still counted; True = .env limits.
+    Same arguments and result as _run_task.
+    """
+    from ai_agent.ratelimit import limits_override
+
+    with limits_override(limits):
+        return _run_task(*args, **kwargs)

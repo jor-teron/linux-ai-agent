@@ -30,6 +30,7 @@ Versioning: `0.42 (42)` — two-number sub-version + change # (`0.XX (N)`, not t
 - Shell blocklist + sudo Confirm; bubblewrap freehand when available
 - Sticky confirm bar; Enter sends; upload/download; web search / reminders / jobs
 - **Thinking (v0.45)** — qwen3:1.7b in Local list; folded "Thinking" box; Think on/off toggle
+- **Limits toggle (v0.46)** — auto off in Local, on in Online; off skips waits/caps but still counts
 - UI port **9191**; Telegram YES/NO / sudo password
 
 ## Later

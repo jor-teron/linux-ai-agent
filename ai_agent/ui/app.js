@@ -9,6 +9,7 @@ const sudoPassWrap=document.getElementById('sudoPassWrap'),sudoPass=document.get
 const themeBtn=document.getElementById('themeBtn');
 const toolsToggle=document.getElementById('toolsToggle');
 const thinkToggle=document.getElementById('thinkToggle');
+const limitsToggle=document.getElementById('limitsToggle');
 /* catalog from /api/models: tasks, modes, providers[{label,mode,needs_key,models[{id,label}]}], defaults */
 let catalog={tasks:[],modes:[],providers:{},default_provider:'gemini',default_model:'gemini-3.5-flash-lite',default_mode:'online',default_task:'chat',status_blink_ms:2000};
 let pendingVisionImage=null; // {name,content,encoding,mime} set by file picker for Vision
@@ -79,6 +80,17 @@ toolsToggle.onchange=()=>{
 thinkToggle.onchange=()=>{
   localStorage.setItem('think', thinkToggle.checked?'1':'0');
 };
+
+/* Limits toggle (v0.46): follows Mode automatically.
+   Local  → off and greyed out (local models are never rate limited).
+   Online → reset to ON each time Online is chosen / the page loads;
+            the user may switch it off for this session only. */
+function syncLimits(){
+  const local=(modeSel.value==='local');
+  limitsToggle.checked=!local;
+  limitsToggle.disabled=local;
+}
+limitsToggle.onchange=()=>{ updateStatus(); };
 
 /* Put a folded "Thinking" box at the top of a bot message (v0.45).
    Uses textContent only, so model text can never inject HTML. */
@@ -172,6 +184,7 @@ function fillModes(){
   if(sm && [...modeSel.options].some(o=>o.value===sm)) modeSel.value=sm;
   else if(catalog.default_mode) modeSel.value=catalog.default_mode;
   else modeSel.value='online';
+  syncLimits();  // page load: Limits matches the current mode
 }
 
 function fillProviders(){
@@ -241,6 +254,8 @@ function updateStatus(){
     ok=!!(providersReady&&providersReady[pid]);
     text=ok?'OK':'No model';
   }
+  // Short hint when the user turned Limits off in Online mode.
+  if(ok && mode==='online' && !limitsToggle.checked) text='OK · limits off';
   status.textContent=text;
   status.className=ok?'ok':'bad';
   led.className=ok?'ok':'bad';
@@ -371,6 +386,7 @@ taskSel.onchange=()=>{
 
 modeSel.onchange=()=>{
   localStorage.setItem('mode',modeSel.value);
+  syncLimits();  // Local → off, Online → back ON
   fillProviders();
   fillModels();
   localStorage.setItem('p',provider.value);
@@ -466,7 +482,7 @@ document.getElementById('f').onsubmit=async ev=>{
   try{
     const payload={
       message, provider:provider.value, model:model.value, history,
-      tools:!!toolsToggle.checked, think:!!thinkToggle.checked, task
+      tools:!!toolsToggle.checked, think:!!thinkToggle.checked, limits:!!limitsToggle.checked, task
     };
     if(task==='vision' && pendingVisionImage){
       payload.image=pendingVisionImage;
