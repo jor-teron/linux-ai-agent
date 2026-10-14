@@ -85,3 +85,47 @@ Same keys cover Chat / Image / Vision / Video when that provider allows it. Neve
 - Chat logs: `~/ai-workspace/chats/YYYY_MM/YYYY_MM_DD.md` (disk only; API uses `HISTORY_TURNS`).
 - API limits (optional in `.env`): `TPM`, `RPM`, `RPD`, `API_DELAY_SEC` (`0` = no limit).
 - Stop: `systemctl --user stop linux-ai-agent` · Manual: `./run.sh`
+
+## About this project
+
+### How it started
+It began as a small personal agent called debian-ai-agent, running on Jor's Debian 11 PC. It grew step by step, was renamed linux-ai-agent in 0.2.0, and was split into the `ai_agent/` package later on.
+
+### What the user needed
+A simple AI helper on their own Linux PC that a non-technical person can use. It needed a local web chat page, phone access through Telegram, a choice of free or paid cloud APIs, offline models when there's no key, and real safety around shell and sudo.
+
+### What it does
+It runs a small web server on the PC. You chat in the browser or on Telegram, and the agent can answer, make images and videos, read uploaded images, and (if you allow it) run commands and work with files inside `~/ai-workspace`.
+
+### Features
+- Task picker: Chat, Image, Video, Vision
+- Online (cloud API) or Local (Ollama / llama.cpp) mode
+- Many providers: Gemini, OpenAI, xAI, Anthropic, DeepSeek, OpenRouter, DeepInfra, plus media providers (Segmind, FreeTheAi, Pollinations, Agnes, Zhipu, Groq)
+- Status light (OK / No key / No model)
+- Shell and sudo always need a Confirm (web) or YES / NO (Telegram)
+- Optional Bubblewrap sandbox
+- Memory of facts, plus daily Markdown chat logs
+- API rate limits set in `.env`
+- Soft light and dark themes, plus an Update button
+
+### Methods and techniques
+- One install line, and `.env` is kept on every update
+- Tool schemas are only sent when needed, and short history (`HISTORY_TURNS`) keeps token use low
+- Each Task only lists models suited to it, so chat models don't show up for Image, Video or Vision
+- A workspace jail keeps file access inside `~/ai-workspace`
+- Prompts are plain text files, so they're easy to edit
+
+### Technology
+Python 3 (standard library), a plain HTML/CSS/JS web page, systemd user service, bash installer, git, optional Bubblewrap, the Telegram Bot API, and OpenAI-compatible and Gemini HTTP APIs.
+
+### Future plans
+- Login protection when the server is open to the LAN
+- Download links that work with files in subfolders
+- Safer chat log formatting
+- Telegram photos and files again (maybe as documents)
+- Windows version (zip + `run.bat`)
+- Clearer API-limit settings
+- InferencePort local video proxy
+
+### Ending notes
+This is a personal project built in small, careful releases (version format `0.XX (N)`). Changes are discussed first and only built or pushed after Jor says go.
