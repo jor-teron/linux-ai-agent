@@ -17,8 +17,8 @@
   --confirm-code-bg:#1a1208; --confirm-code:#fde68a; --input-bg:#0c1118;
 }
 *{box-sizing:border-box}
-html,body{height:100%;margin:0}
-body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;height:100vh;overflow:hidden}
+html,body{height:100dvh;margin:0}
+body{font-family:system-ui,sans-serif;background:var(--bg);color:var(--text);display:flex;flex-direction:column;height:100vh;height:100dvh;overflow:hidden}
 header{flex:0 0 auto;padding:12px 16px;background:var(--panel);display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
 h1{font-size:1.05rem;margin:0;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 h1 .ver{font-size:.75rem;font-weight:500;color:var(--muted)}
@@ -74,3 +74,23 @@ button:disabled{opacity:.5}
 /* Tools checkbox in header */
 #toolsToggle{width:18px;height:18px;accent-color:var(--accent);cursor:pointer}
 .field input[type=checkbox]{margin:0}
+
+/* --- Mobile layout (v0.43) ---
+   Small screens: header stays ONE row and scrolls sideways instead of
+   wrapping to several rows; body uses 100dvh (dynamic viewport, accounts for the
+   phone's address bar and keyboard) so the chat log shrinks and the input
+   box always stays visible at the bottom. */
+@media (max-width:700px){
+  header{flex-wrap:nowrap;padding:6px 8px;gap:8px;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  header::-webkit-scrollbar{display:none}
+  h1{flex:0 0 auto;font-size:.95rem;flex-wrap:nowrap;white-space:nowrap}
+  .controls{flex-wrap:nowrap;gap:6px;flex:0 0 auto}
+  .field label{font-size:.62rem}
+  .controls select{max-width:120px}
+  #themeBtn{padding:4px 8px;font-size:1rem}
+  #log{padding:10px}
+  form#f{flex-wrap:nowrap;padding:8px;gap:6px}
+  #f textarea{min-width:0;resize:none}
+  #f .up input[type=file]{max-width:90px}
+  #f #send{padding:0 12px}
+}
