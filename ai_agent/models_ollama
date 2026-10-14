@@ -4,6 +4,7 @@ tinyllama|tinyllama (~1B)
 llama3.2:1b
 qwen2.5:0.5b
 qwen2.5:1.5b
+qwen3:1.7b|qwen3:1.7b (thinking)
 gemma2:2b
 phi3:mini|phi3:mini (~3.8B)
 llama3.2:3b

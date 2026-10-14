@@ -97,3 +97,8 @@ button:disabled{opacity:.5}
 
 /* Tokens/sec line under each bot reply (v0.44) */
 .speed{margin-top:6px;font-size:.7rem;color:var(--muted);white-space:normal}
+
+/* Folded "Thinking" box at the top of a bot reply (v0.45): small + muted */
+.msg details.think{font-size:12px;opacity:.65;margin:0 0 6px}
+.msg details.think summary{cursor:pointer}
+.msg details.think pre{white-space:pre-wrap;margin:4px 0 0;font-size:12px;max-height:240px;overflow:auto}

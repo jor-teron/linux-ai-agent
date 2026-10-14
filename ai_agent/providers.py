@@ -247,6 +247,7 @@ _OLLAMA_MODELS_FALLBACK: List[Dict[str, str]] = [
     {"id": "llama3.2:1b", "label": "llama3.2:1b"},
     {"id": "qwen2.5:0.5b", "label": "qwen2.5:0.5b"},
     {"id": "qwen2.5:1.5b", "label": "qwen2.5:1.5b"},
+    {"id": "qwen3:1.7b", "label": "qwen3:1.7b (thinking)"},
     {"id": "gemma2:2b", "label": "gemma2:2b"},
     {"id": "phi3:mini", "label": "phi3:mini (~3.8B)"},
     {"id": "llama3.2:3b", "label": "llama3.2:3b"},

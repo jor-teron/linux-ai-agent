@@ -12,6 +12,7 @@ Imports from: ai_agent.config, ai_agent.tools.
 Used by: server (run_chat), tools (plain chat for jobs, _http_json).
 """
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -71,6 +72,33 @@ def _http_json(url, body, headers, timeout=90, limit=None):
     if isinstance(data, dict):
         data["_elapsed"] = time.perf_counter() - t0
     return data
+
+
+# ---------------------------------------------------------------------------
+# Thinking split (v0.45): reasoning models like Qwen3
+# ---------------------------------------------------------------------------
+
+_THINK_RE = re.compile(r"<think>(.*?)(?:</think>|$)", re.S | re.I)
+
+
+def _split_think(text):
+    """Split "<think>...</think>" blocks out of a reply.
+
+    Returns (reply_without_thinking, thinking_text). An unclosed <think>
+    at the end counts as thinking too. Plain replies come back unchanged.
+    """
+    text = text or ""
+    if "<think" not in text.lower():
+        return text, ""
+    parts = [m.group(1).strip() for m in _THINK_RE.finditer(text)]
+    clean = _THINK_RE.sub("", text).strip()
+    return clean, "\n\n".join(x for x in parts if x)
+
+
+def _http_err_think_field(err_text):
+    """True if an HTTP 400 body looks like the server rejected the "think" field."""
+    t = (err_text or "").lower()
+    return "think" in t or "reasoning" in t or "unknown" in t or "unrecognized" in t or "invalid" in t
 
 
 # ---------------------------------------------------------------------------
@@ -293,7 +321,9 @@ def gemini_chat(message, model, history, use_tools=True):
     else:
         reply = reply or "Stopped after too many tool steps."
 
-    return {"ok": True, "reply": reply, "tools": tool_trace, "model": model, "provider": "gemini", "stats": speed.stats()}
+    # Move any <think> blocks out of the visible reply (v0.45).
+    reply, thinking = _split_think(reply)
+    return {"ok": True, "reply": reply or "(No text)", "thinking": thinking, "tools": tool_trace, "model": model, "provider": "gemini", "stats": speed.stats()}
 
 
 # ---------------------------------------------------------------------------
@@ -325,8 +355,13 @@ def _http_err_no_tools(err_text):
     return "does not support tools" in (err_text or "").lower()
 
 
-def openai_compat_chat(provider, message, model, history, use_tools=True):
+def openai_compat_chat(provider, message, model, history, use_tools=True, think=None):
     """Chat with an OpenAI-style API, running workspace tools as tool_calls.
+
+    think (v0.45): None = leave the request alone. False = ask local Ollama
+    to skip thinking ("think": false in the body, plus " /no_think" on the
+    last user message for qwen3 models). Thinking text from `reasoning` /
+    `reasoning_content` / <think> tags is returned as "thinking", never in reply.
 
     Used for cloud OpenAI-compat providers and local Ollama / llama.cpp
     (local base URL from providers.provider_openai_base; no API key required).
@@ -354,7 +389,15 @@ def openai_compat_chat(provider, message, model, history, use_tools=True):
     for turn in (history or [])[-n_hist:]:
         role = "user" if turn.get("role") == "user" else "assistant"
         messages.append({"role": role, "content": turn.get("content", "")})
-    messages.append({"role": "user", "content": message})
+    # Qwen3 understands a "/no_think" soft switch inside the user message.
+    is_ollama = provider == "ollama"
+    user_msg = message
+    if think is False and "qwen3" in (model or "").lower():
+        user_msg = message + " /no_think"
+    messages.append({"role": "user", "content": user_msg})
+    # Only local Ollama gets the "think" body field; dropped once if rejected.
+    send_think_field = is_ollama and think is not None
+    thinking_parts = []
 
     # Resolved base includes /v1 for local Ollama and llama.cpp servers.
     base = meta.get("base") or provider_openai_base(provider)
@@ -389,11 +432,21 @@ def openai_compat_chat(provider, message, model, history, use_tools=True):
         if use_tools:
             body["tools"] = openai_tools()
             body["tool_choice"] = "auto"
+        if send_think_field:
+            body["think"] = bool(think)
+            # Ollama's /v1 endpoint ignores "think" but honours reasoning_effort.
+            if think is False:
+                body["reasoning_effort"] = "none"
         try:
             data = _http_json(url, body, headers, timeout=90, limit=api_limit)
             speed.add(data)
         except urllib.error.HTTPError as e:
             err = e.read().decode("utf-8", errors="replace")[:800]
+            # Server rejected the "think" field → one retry without it.
+            if send_think_field and e.code == 400 and _http_err_think_field(err):
+                send_think_field = False
+                rounds += 1
+                continue
             # Auto-fallback: model rejected tools → one plain retry (no tools).
             if use_tools and not no_tools_retry_done and _http_err_no_tools(err):
                 use_tools = False
@@ -422,6 +475,13 @@ def openai_compat_chat(provider, message, model, history, use_tools=True):
         msg = choice.get("message") or {}
         tool_calls = msg.get("tool_calls") or []
         content = msg.get("content") or ""
+        # Thinking can arrive as a separate field or inline <think> tags.
+        r = msg.get("reasoning") or msg.get("reasoning_content") or ""
+        if r and r.strip():
+            thinking_parts.append(r.strip())
+        content, inline_think = _split_think(content)
+        if inline_think:
+            thinking_parts.append(inline_think)
 
         if not use_tools or not tool_calls:
             reply = (content or "").strip() or "(No text)"
@@ -455,7 +515,15 @@ def openai_compat_chat(provider, message, model, history, use_tools=True):
     else:
         reply = reply or "Stopped after too many tool steps."
 
-    return {"ok": True, "reply": reply, "tools": tool_trace, "model": model, "provider": provider, "stats": speed.stats()}
+    return {
+        "ok": True,
+        "reply": reply,
+        "thinking": "\n\n".join(thinking_parts),
+        "tools": tool_trace,
+        "model": model,
+        "provider": provider,
+        "stats": speed.stats(),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -563,9 +631,12 @@ def anthropic_chat(message, model, history, use_tools=True):
     else:
         reply = reply or "Stopped after too many tool steps."
 
+    # Move any <think> blocks out of the visible reply (v0.45).
+    reply, thinking = _split_think(reply)
     return {
         "ok": True,
-        "reply": reply,
+        "reply": reply or "(No text)",
+        "thinking": thinking,
         "tools": tool_trace,
         "model": model,
         "provider": "anthropic",
@@ -578,8 +649,10 @@ def anthropic_chat(message, model, history, use_tools=True):
 # ---------------------------------------------------------------------------
 
 
-def run_chat(message, provider=None, model=None, history=None, use_tools=None):
+def run_chat(message, provider=None, model=None, history=None, use_tools=None, think=None):
     """Pick the right chat function from PROVIDERS[id].kind (online + local).
+
+    think: None = untouched; True/False = Think toggle (OpenAI-compat path only).
 
     use_tools: None → resolve from TOOLS_DEFAULT / request / keywords;
     True/False → explicit. When False, no tool schemas are sent.
@@ -603,7 +676,7 @@ def run_chat(message, provider=None, model=None, history=None, use_tools=None):
     if kind == "gemini":
         return gemini_chat(message, model, history, use_tools=want_tools)
     if kind == "openai":
-        return openai_compat_chat(provider, message, model, history, use_tools=want_tools)
+        return openai_compat_chat(provider, message, model, history, use_tools=want_tools, think=think)
     if kind == "anthropic":
         return anthropic_chat(message, model, history, use_tools=want_tools)
     return {"ok": False, "error": "Unsupported provider kind", "reply": "", "tools": []}

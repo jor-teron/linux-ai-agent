@@ -267,6 +267,10 @@ class Handler(BaseHTTPRequestHandler):
         tools_flag = data.get("tools", None)
         if tools_flag is not None:
             tools_flag = bool(tools_flag)
+        # Optional Think toggle (v0.45). None → leave the model's default.
+        think_flag = data.get("think", None)
+        if think_flag is not None:
+            think_flag = bool(think_flag)
         result = run_task(
             task=task,
             message=message,
@@ -276,6 +280,7 @@ class Handler(BaseHTTPRequestHandler):
             use_tools=tools_flag,
             image=data.get("image"),
             image_name=(data.get("image_name") or "").strip(),
+            think=think_flag,
         )
         # Persist completed exchange to chats/YYYY_MM/YYYY_MM_DD.md (source of truth).
         # Do this for both ok and error replies so refresh still shows the turn.

@@ -55,6 +55,7 @@ def run_task(
     use_tools=None,
     image=None,
     image_name="",
+    think=None,
 ):
     """Run one task. Returns the same shape as brain.run_chat plus media fields.
 
@@ -88,6 +89,7 @@ def run_task(
             model=model,
             history=history,
             use_tools=use_tools,
+            think=think,  # Think toggle (v0.45); None = untouched
         )
         out["task"] = "chat"
         return out

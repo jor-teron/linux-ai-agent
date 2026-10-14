@@ -8,6 +8,7 @@ const fileInput=document.getElementById('file');
 const sudoPassWrap=document.getElementById('sudoPassWrap'),sudoPass=document.getElementById('sudoPass');
 const themeBtn=document.getElementById('themeBtn');
 const toolsToggle=document.getElementById('toolsToggle');
+const thinkToggle=document.getElementById('thinkToggle');
 /* catalog from /api/models: tasks, modes, providers[{label,mode,needs_key,models[{id,label}]}], defaults */
 let catalog={tasks:[],modes:[],providers:{},default_provider:'gemini',default_model:'gemini-3.5-flash-lite',default_mode:'online',default_task:'chat',status_blink_ms:2000};
 let pendingVisionImage=null; // {name,content,encoding,mime} set by file picker for Vision
@@ -68,6 +69,27 @@ themeBtn.onclick=()=>{
 toolsToggle.onchange=()=>{
   localStorage.setItem('tools', toolsToggle.checked?'1':'0');
 };
+
+/* Think toggle (v0.45): persisted; default ON. Off asks reasoning models
+   (e.g. qwen3 on Ollama) to skip thinking for faster replies. */
+(function initThink(){
+  const s=localStorage.getItem('think');
+  thinkToggle.checked = !(s==='0' || s==='false');
+})();
+thinkToggle.onchange=()=>{
+  localStorage.setItem('think', thinkToggle.checked?'1':'0');
+};
+
+/* Put a folded "Thinking" box at the top of a bot message (v0.45).
+   Uses textContent only, so model text can never inject HTML. */
+function addThinking(msgEl, thinking){
+  if(!msgEl || !thinking) return;
+  const d=document.createElement('details'); d.className='think';
+  const sm=document.createElement('summary'); sm.textContent='Thinking';
+  const pre=document.createElement('pre'); pre.textContent=thinking;
+  d.appendChild(sm); d.appendChild(pre);
+  msgEl.insertBefore(d, msgEl.firstChild);
+}
 
 
 /** Store ui_light map from API and re-apply if currently in light theme. */
@@ -444,7 +466,7 @@ document.getElementById('f').onsubmit=async ev=>{
   try{
     const payload={
       message, provider:provider.value, model:model.value, history,
-      tools:!!toolsToggle.checked, task
+      tools:!!toolsToggle.checked, think:!!thinkToggle.checked, task
     };
     if(task==='vision' && pendingVisionImage){
       payload.image=pendingVisionImage;
@@ -454,6 +476,8 @@ document.getElementById('f').onsubmit=async ev=>{
     const data=await res.json();
     if(!data.ok) add('bot', data.error||data.reply||'Failed', data.tools); else {
       add('bot', data.reply, data.tools);
+      // Folded thinking above the reply text (only when the model sent some).
+      if(data.thinking) addThinking(log.lastChild, data.thinking);
       // Speed line under the reply (v0.44): "42 tokens · 12.3 t/s".
       // Only shown when the provider sent a token count.
       if(data.stats && data.stats.tps && log.lastChild){
