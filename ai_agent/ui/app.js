@@ -454,6 +454,14 @@ document.getElementById('f').onsubmit=async ev=>{
     const data=await res.json();
     if(!data.ok) add('bot', data.error||data.reply||'Failed', data.tools); else {
       add('bot', data.reply, data.tools);
+      // Speed line under the reply (v0.44): "42 tokens · 12.3 t/s".
+      // Only shown when the provider sent a token count.
+      if(data.stats && data.stats.tps && log.lastChild){
+        const sp=document.createElement('div'); sp.className='speed';
+        sp.textContent=data.stats.tokens+' tokens · '+data.stats.tps+' t/s';
+        sp.title=data.stats.seconds+'s model time';
+        log.lastChild.appendChild(sp);
+      }
       // Surface generated media download links from media field too.
       if(data.media && data.media.name){
         const dl=document.createElement('div'); dl.className='dl';

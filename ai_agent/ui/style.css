@@ -94,3 +94,6 @@ button:disabled{opacity:.5}
   #f .up input[type=file]{max-width:90px}
   #f #send{padding:0 12px}
 }
+
+/* Tokens/sec line under each bot reply (v0.44) */
+.speed{margin-top:6px;font-size:.7rem;color:var(--muted);white-space:normal}

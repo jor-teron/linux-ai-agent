@@ -12,6 +12,7 @@ Imports from: ai_agent.config, ai_agent.tools.
 Used by: server (run_chat), tools (plain chat for jobs, _http_json).
 """
 import json
+import time
 import urllib.error
 import urllib.request
 from ai_agent.config import (
@@ -62,8 +63,60 @@ def _http_json(url, body, headers, timeout=90, limit=None):
         headers=headers,
         method="POST",
     )
+    # Time only the network/model part (after any rate-limit wait) so the
+    # tokens/sec line under each reply reflects real model speed.
+    t0 = time.perf_counter()
     with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+        data = json.loads(resp.read().decode("utf-8"))
+    if isinstance(data, dict):
+        data["_elapsed"] = time.perf_counter() - t0
+    return data
+
+
+# ---------------------------------------------------------------------------
+# Speed stats (tokens / second under each reply, v0.44)
+# ---------------------------------------------------------------------------
+
+
+def _out_tokens(data):
+    """Output (generated) token count from any provider reply, or 0.
+
+    OpenAI-compat (incl. Ollama / llama.cpp): usage.completion_tokens
+    Gemini: usageMetadata.candidatesTokenCount
+    Anthropic: usage.output_tokens
+    """
+    if not isinstance(data, dict):
+        return 0
+    usage = data.get("usage") or {}
+    meta = data.get("usageMetadata") or {}
+    n = usage.get("completion_tokens") or usage.get("output_tokens") or meta.get("candidatesTokenCount") or 0
+    try:
+        return int(n)
+    except (TypeError, ValueError):
+        return 0
+
+
+class _Speed:
+    """Adds up tokens and model seconds across tool rounds of one reply."""
+
+    def __init__(self):
+        self.tokens = 0
+        self.secs = 0.0
+
+    def add(self, data):
+        self.tokens += _out_tokens(data)
+        if isinstance(data, dict):
+            self.secs += float(data.get("_elapsed") or 0)
+
+    def stats(self):
+        """{tokens, seconds, tps} or None when the provider sent no count."""
+        if self.tokens <= 0 or self.secs <= 0:
+            return None
+        return {
+            "tokens": self.tokens,
+            "seconds": round(self.secs, 2),
+            "tps": round(self.tokens / self.secs, 1),
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +232,7 @@ def gemini_chat(message, model, history, use_tools=True):
     reply = ""
     system = build_system(use_tools=use_tools)
     rounds = 6 if use_tools else 1
+    speed = _Speed()
 
     for _ in range(rounds):
         body = {
@@ -189,6 +243,7 @@ def gemini_chat(message, model, history, use_tools=True):
             body["tools"] = [{"function_declarations": TOOL_DECLS}]
         try:
             data = _http_json(url, body, {"Content-Type": "application/json"}, timeout=90)
+            speed.add(data)
         except urllib.error.HTTPError as e:
             err = e.read().decode("utf-8", errors="replace")[:800]
             return {
@@ -238,7 +293,7 @@ def gemini_chat(message, model, history, use_tools=True):
     else:
         reply = reply or "Stopped after too many tool steps."
 
-    return {"ok": True, "reply": reply, "tools": tool_trace, "model": model, "provider": "gemini"}
+    return {"ok": True, "reply": reply, "tools": tool_trace, "model": model, "provider": "gemini", "stats": speed.stats()}
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +376,7 @@ def openai_compat_chat(provider, message, model, history, use_tools=True):
     # Skip tools when caller asked off, or for known tiny local models.
     use_tools = bool(use_tools) and (not _model_lacks_tool_support(model, meta))
     no_tools_retry_done = False
+    speed = _Speed()
     # Without tools: single completion only (no tool loop).
     rounds = 1 if not use_tools else 6
     i = 0
@@ -335,6 +391,7 @@ def openai_compat_chat(provider, message, model, history, use_tools=True):
             body["tool_choice"] = "auto"
         try:
             data = _http_json(url, body, headers, timeout=90, limit=api_limit)
+            speed.add(data)
         except urllib.error.HTTPError as e:
             err = e.read().decode("utf-8", errors="replace")[:800]
             # Auto-fallback: model rejected tools → one plain retry (no tools).
@@ -398,7 +455,7 @@ def openai_compat_chat(provider, message, model, history, use_tools=True):
     else:
         reply = reply or "Stopped after too many tool steps."
 
-    return {"ok": True, "reply": reply, "tools": tool_trace, "model": model, "provider": provider}
+    return {"ok": True, "reply": reply, "tools": tool_trace, "model": model, "provider": provider, "stats": speed.stats()}
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +494,7 @@ def anthropic_chat(message, model, history, use_tools=True):
     reply = ""
     system = build_system(use_tools=use_tools)
     rounds = 6 if use_tools else 1
+    speed = _Speed()
 
     for _ in range(rounds):
         body = {
@@ -449,6 +507,7 @@ def anthropic_chat(message, model, history, use_tools=True):
             body["tools"] = anthropic_tools()
         try:
             data = _http_json(url, body, headers, timeout=90)
+            speed.add(data)
         except urllib.error.HTTPError as e:
             err = e.read().decode("utf-8", errors="replace")[:800]
             return {
@@ -510,6 +569,7 @@ def anthropic_chat(message, model, history, use_tools=True):
         "tools": tool_trace,
         "model": model,
         "provider": "anthropic",
+        "stats": speed.stats(),
     }
 
 
