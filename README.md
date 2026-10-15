@@ -107,6 +107,7 @@ It runs a small web server on the PC. You chat in the browser or on Telegram, an
 - Memory of facts, plus daily Markdown chat logs
 - API rate limits set in `.env`, with a Limits switch (auto off for Local)
 - Soft light and dark themes, plus an Update button
+- Live streaming replies (Stream switch) for Ollama, llama.cpp and OpenAI-style providers
 - Tokens/sec under each reply; folded "Thinking" box and a Think on/off switch (e.g. qwen3:1.7b)
 
 ### Methods and techniques

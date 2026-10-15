@@ -192,6 +192,60 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._json(404, {"ok": False, "error": "Not found"})
 
+    def _chat_stream(self, raw):
+        """POST /api/chat/stream (v0.48): Server-Sent Events, one JSON per event.
+
+        Events: thinking / content deltas, then one "final" with stats.
+        HTTP/1.0 style: no Content-Length; the stream ends when we close.
+        ThreadingHTTPServer gives each stream its own thread, so other
+        requests keep working while a reply is streaming.
+        """
+        from ai_agent.stream import stream_chat
+
+        try:
+            data = json.loads(raw.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            self._json(400, {"ok": False, "error": "Invalid JSON"})
+            return
+        message = (data.get("message") or "").strip()
+        if not message:
+            self._json(400, {"ok": False, "error": "message required"})
+            return
+        flags = {}
+        for k in ("tools", "think", "limits"):
+            v = data.get(k, None)
+            flags[k] = None if v is None else bool(v)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        final = None
+        try:
+            for ev in stream_chat(
+                message,
+                provider=data.get("provider"),
+                model=data.get("model"),
+                history=data.get("history") or [],
+                use_tools=flags["tools"],
+                think=flags["think"],
+                limits=flags["limits"],
+            ):
+                if ev.get("type") == "final":
+                    final = ev
+                self.wfile.write(("data: %s\n\n" % json.dumps(ev)).encode("utf-8"))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # browser closed the tab mid-reply
+        # Save the exchange to the chat day file, like /api/chat.
+        reply = ((final or {}).get("reply") or "").strip()
+        if final and not final.get("ok") and not reply:
+            reply = (final.get("error") or "chat failed").strip()
+        try:
+            append_exchange(message, reply or "(No reply)")
+        except Exception:  # noqa: BLE001
+            pass
+
     def do_POST(self):  # noqa: N802
         """Handle POST: confirm/cancel shell, upload, update, chat."""
         path = self.path.split("?", 1)[0]
@@ -247,6 +301,9 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 result = tool_write_file(name, content)
             self._json(200 if result.get("ok") else 400, result)
+            return
+        if path == "/api/chat/stream":
+            self._chat_stream(raw)
             return
         if path != "/api/chat":
             self._json(404, {"ok": False, "error": "Not found"})

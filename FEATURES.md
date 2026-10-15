@@ -32,6 +32,7 @@ Versioning: `0.42 (42)` — two-number sub-version + change # (`0.XX (N)`, not t
 - **Thinking (v0.45)** — qwen3:1.7b in Local list; folded "Thinking" box; Think on/off toggle
 - **Limits toggle (v0.46)** — auto off in Local, on in Online; off skips waits/caps but still counts
 - **More Ollama models (v0.47)** — qwen3.5 0.8b/2b, deepseek-r1:1.5b, smallthinker:3b, phi4-mini-reasoning:3.8b (thinking); qwen2.5-coder:3b (coder)
+- **Streaming replies (v0.48)** — Stream toggle; live text + thinking for OpenAI-compat (Ollama, llama.cpp, Groq, OpenRouter…) with Tools off; others fall back
 - UI port **9191**; Telegram YES/NO / sudo password
 
 ## Later

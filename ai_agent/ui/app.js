@@ -10,6 +10,7 @@ const themeBtn=document.getElementById('themeBtn');
 const toolsToggle=document.getElementById('toolsToggle');
 const thinkToggle=document.getElementById('thinkToggle');
 const limitsToggle=document.getElementById('limitsToggle');
+const streamToggle=document.getElementById('streamToggle');
 /* catalog from /api/models: tasks, modes, providers[{label,mode,needs_key,models[{id,label}]}], defaults */
 let catalog={tasks:[],modes:[],providers:{},default_provider:'gemini',default_model:'gemini-3.5-flash-lite',default_mode:'online',default_task:'chat',status_blink_ms:2000};
 let pendingVisionImage=null; // {name,content,encoding,mime} set by file picker for Vision
@@ -91,6 +92,67 @@ function syncLimits(){
   limitsToggle.disabled=local;
 }
 limitsToggle.onchange=()=>{ updateStatus(); };
+
+/* Stream toggle (v0.48): persisted; default ON. Chat task only. */
+(function initStream(){
+  const s=localStorage.getItem('stream');
+  streamToggle.checked = !(s==='0' || s==='false');
+})();
+streamToggle.onchange=()=>{
+  localStorage.setItem('stream', streamToggle.checked?'1':'0');
+};
+
+/* Add the tokens/sec line under a bot message. "~" marks an estimate
+   (provider sent no token count, so stream chunks were counted). */
+function addSpeed(msgEl, stats){
+  if(!msgEl || !stats || !stats.tps) return;
+  const sp=document.createElement('div'); sp.className='speed';
+  const est=stats.estimate?'~':'';
+  sp.textContent=est+stats.tokens+' tokens · '+est+stats.tps+' t/s';
+  sp.title=stats.seconds+'s model time';
+  msgEl.appendChild(sp);
+}
+
+/* Stream one chat reply from /api/chat/stream into a new bot bubble.
+   Text goes in with textContent (never HTML). Returns the final event,
+   or null if the stream could not start (caller then uses /api/chat). */
+async function streamChat(payload){
+  let res;
+  try{
+    res=await fetch('/api/chat/stream',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)});
+  }catch(e){ return null; }
+  if(!res.ok || !res.body) return null;
+  const d=document.createElement('div'); d.className='msg bot';
+  const textNode=document.createTextNode(''); d.appendChild(textNode);
+  log.appendChild(d);
+  let thinkPre=null, final=null, buf='';
+  const reader=res.body.getReader(), dec=new TextDecoder();
+  // Read SSE: events are "data: {json}" separated by a blank line.
+  while(true){
+    const {value,done}=await reader.read();
+    if(done) break;
+    buf+=dec.decode(value,{stream:true});
+    let i;
+    while((i=buf.indexOf('\n\n'))>=0){
+      const line=buf.slice(0,i).trim(); buf=buf.slice(i+2);
+      if(!line.startsWith('data:')) continue;
+      let ev; try{ ev=JSON.parse(line.slice(5)); }catch(e){ continue; }
+      if(ev.type==='content'){ textNode.data+=ev.text; }
+      else if(ev.type==='thinking'){
+        if(!thinkPre){ addThinking(d,' '); thinkPre=d.querySelector('details.think pre'); thinkPre.textContent=''; }
+        thinkPre.textContent+=ev.text;
+      }
+      else if(ev.type==='final'){ final=ev; }
+      log.scrollTop=log.scrollHeight;
+    }
+  }
+  if(!final){ textNode.data+=(textNode.data?'\n':'')+'(stream ended early)'; return {ok:false}; }
+  if(!final.ok){ textNode.data=final.error||final.reply||'Failed'; return final; }
+  textNode.data=final.reply;  // clean final text (tags stripped, trimmed)
+  addSpeed(d, final.stats);
+  return final;
+}
 
 /* Put a folded "Thinking" box at the top of a bot message (v0.45).
    Uses textContent only, so model text can never inject HTML. */
@@ -487,6 +549,19 @@ document.getElementById('f').onsubmit=async ev=>{
     if(task==='vision' && pendingVisionImage){
       payload.image=pendingVisionImage;
     }
+    // Streaming path (v0.48): Chat task + Stream toggle on.
+    if(task==='chat' && streamToggle.checked){
+      const fin=await streamChat(payload);
+      if(fin){
+        if(fin.ok){
+          history.push({role:'user',content:message},{role:'assistant',content:fin.reply});
+          if(history.length>20) history=history.slice(-20);
+        }
+        await fetchHealth(); updateStatus();
+        return;
+      }
+      // fin === null → stream could not start; fall through to /api/chat.
+    }
     const res=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(payload)});
     const data=await res.json();
@@ -496,12 +571,7 @@ document.getElementById('f').onsubmit=async ev=>{
       if(data.thinking) addThinking(log.lastChild, data.thinking);
       // Speed line under the reply (v0.44): "42 tokens · 12.3 t/s".
       // Only shown when the provider sent a token count.
-      if(data.stats && data.stats.tps && log.lastChild){
-        const sp=document.createElement('div'); sp.className='speed';
-        sp.textContent=data.stats.tokens+' tokens · '+data.stats.tps+' t/s';
-        sp.title=data.stats.seconds+'s model time';
-        log.lastChild.appendChild(sp);
-      }
+      addSpeed(log.lastChild, data.stats);
       // Surface generated media download links from media field too.
       if(data.media && data.media.name){
         const dl=document.createElement('div'); dl.className='dl';
