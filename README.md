@@ -99,7 +99,7 @@ It runs a small web server on the PC. You chat in the browser or on Telegram, an
 
 ### Features
 - Task picker: Chat, Image, Video, Vision
-- Online (cloud API) or Local (Ollama / llama.cpp) mode
+- Online (cloud API) or Local (Ollama / llama.cpp) mode. Download Local models first with `ollama pull <name>`
 - Many providers: Gemini, OpenAI, xAI, Anthropic, DeepSeek, OpenRouter, DeepInfra, plus media providers (Segmind, FreeTheAi, Pollinations, Agnes, Zhipu, Groq)
 - Status light (OK / No key / No model)
 - Shell and sudo always need a Confirm (web) or YES / NO (Telegram)

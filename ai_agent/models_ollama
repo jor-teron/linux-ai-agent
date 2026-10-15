@@ -5,6 +5,12 @@ llama3.2:1b
 qwen2.5:0.5b
 qwen2.5:1.5b
 qwen3:1.7b|qwen3:1.7b (thinking)
+qwen3.5:0.8b|qwen3.5:0.8b (thinking)
+qwen3.5:2b|qwen3.5:2b (thinking)
+deepseek-r1:1.5b|deepseek-r1:1.5b (thinking)
+smallthinker:3b|smallthinker:3b (thinking)
+phi4-mini-reasoning:3.8b|phi4-mini-reasoning:3.8b (thinking)
+qwen2.5-coder:3b|qwen2.5-coder:3b (coder)
 gemma2:2b
 phi3:mini|phi3:mini (~3.8B)
 llama3.2:3b

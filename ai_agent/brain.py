@@ -97,6 +97,15 @@ def _split_think(text):
     return clean, "\n\n".join(x for x in parts if x)
 
 
+def _wants_no_think_tag(model):
+    """True only for the Qwen3 family ("qwen3" or "qwen3:<tag>", any namespace).
+
+    Excludes qwen3.5 / qwen3-coder etc., which do not use the /no_think tag.
+    """
+    name = (model or "").lower().rsplit("/", 1)[-1]
+    return name == "qwen3" or name.startswith("qwen3:")
+
+
 def _http_err_think_field(err_text):
     """True if an HTTP 400 body looks like the server rejected the "think" field."""
     t = (err_text or "").lower()
@@ -391,10 +400,14 @@ def openai_compat_chat(provider, message, model, history, use_tools=True, think=
     for turn in (history or [])[-n_hist:]:
         role = "user" if turn.get("role") == "user" else "assistant"
         messages.append({"role": role, "content": turn.get("content", "")})
-    # Qwen3 understands a "/no_think" soft switch inside the user message.
+    # Qwen3 (exactly the "qwen3" family, e.g. qwen3:1.7b) understands a
+    # "/no_think" soft switch in the user message. Other thinking models
+    # (qwen3.5, deepseek-r1, phi4-mini-reasoning, smallthinker) would just
+    # see it as stray text, so they rely on "think": false /
+    # reasoning_effort "none" in the request body instead.
     is_ollama = provider == "ollama"
     user_msg = message
-    if think is False and "qwen3" in (model or "").lower():
+    if think is False and _wants_no_think_tag(model):
         user_msg = message + " /no_think"
     messages.append({"role": "user", "content": user_msg})
     # Only local Ollama gets the "think" body field; dropped once if rejected.
